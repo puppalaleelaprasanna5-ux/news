@@ -41,7 +41,7 @@ def _models_dir(tmp_path):
     return d
 
 
-def test_threshold_tuning_writes_outputs_and_reports_test_half_only(tmp_path):
+def test_threshold_tuning_writes_outputs_and_reports_test_half_only(tmp_path, capsys):
     csv = tmp_path / "w.csv"
     _make_csv(csv)
     out = tmp_path / "results"
@@ -49,6 +49,9 @@ def test_threshold_tuning_writes_outputs_and_reports_test_half_only(tmp_path):
                     "--output-dir", str(out)], predictor=ShiftedPredictor())
     assert code == 0
     res = json.loads((out / "threshold_tuning.json").read_text())
+    printed = capsys.readouterr().out
+    assert str(out / "threshold_tuning.json") in printed
+    assert str(out / "threshold_sweep.png") in printed
     assert (out / "threshold_sweep.png").exists()
     assert res["split"]["tune_rows"] + res["split"]["test_rows"] == 200
     assert res["split"]["seed"] == 42
@@ -126,6 +129,11 @@ def test_run_uses_tuning_rows_for_thresholds_and_test_rows_for_metrics(tmp_path,
         {"text": _article(bool(index % 2), index), "label": index % 2}
         for index in range(40)
     ]
+    conflict_text = _article(False, 40)
+    rows.extend([
+        {"text": conflict_text, "label": 0},
+        {"text": conflict_text, "label": 1},
+    ])
     pd.DataFrame(rows).to_csv(csv_path, index=False)
     predictor = ShiftedPredictor()
     models_dir = _models_dir(tmp_path)
@@ -158,6 +166,15 @@ def test_run_uses_tuning_rows_for_thresholds_and_test_rows_for_metrics(tmp_path,
         np.testing.assert_array_equal(test_p, expected_test["fake_probability"].to_numpy())
     assert result["split"]["tune_groups"] == expected_tune["group_id"].nunique()
     assert result["split"]["test_groups"] == expected_test["group_id"].nunique()
+    assert result["split"]["tune_test_groups_disjoint"] is True
+    assert result["split"]["conflict_excluded_rows"] == 2
+    assert result["split"]["conflict_excluded_groups"] == 1
+    assert result["split"]["conflict_exclusions"][0]["rows"] == [
+        {"source_row": 40, "label": 0},
+        {"source_row": 41, "label": 1},
+    ]
+    report = json.loads((tmp_path / "output" / "threshold_tuning.json").read_text())
+    assert report["split"]["conflict_exclusions"] == result["split"]["conflict_exclusions"]
 
 
 def test_score_dataset_preserves_source_text_label_score_alignment(tmp_path):
@@ -190,6 +207,70 @@ def test_score_dataset_preserves_source_text_label_score_alignment(tmp_path):
     assert rows.iloc[0]["group_id"] == rows.iloc[1]["group_id"]
     assert counts["dropped_empty_rows"] == 1
     assert counts["unscorable_rows"] == 1
+
+
+def test_score_dataset_excludes_conflicting_groups_and_reports_original_rows(tmp_path):
+    class RecordingPredictor:
+        def __init__(self):
+            self.scored_texts = []
+
+        def predict_batch(self, texts):
+            self.scored_texts.extend(texts)
+            return [
+                {"label_id": int("fake" in text), "fake_probability": 0.75 if "fake" in text else 0.25}
+                for text in texts
+            ]
+
+    csv_path = tmp_path / "conflicting.csv"
+    duplicated = _article(False, 500)
+    source = pd.DataFrame([
+        {"title": "Original real label", "text": duplicated, "label": 0},
+        {"title": "Conflicting duplicate", "text": duplicated, "label": 1},
+        *[
+            {"title": f"t{i}", "text": _article(bool(i % 2), i), "label": int(i % 2)}
+            for i in range(40)
+        ],
+    ])
+    source.to_csv(csv_path, index=False)
+    predictor = RecordingPredictor()
+
+    scored, counts = tt.score_dataset(
+        csv_path, _models_dir(tmp_path), False, predictor
+    )
+    all_group_ids = tt._duplicate_group_ids(
+        source["text"].apply(tt.clean_single_text).tolist(),
+        source["label"].to_numpy(),
+        source_rows=list(range(len(source))),
+        allow_conflicting_labels=True,
+    )
+    expected_group_ids = all_group_ids[2:]
+
+    assert counts["raw_rows"] == len(source)
+    assert counts["filtered_rows"] == len(source)
+    assert counts["conflict_excluded_rows"] == 2
+    assert counts["conflict_excluded_groups"] == 1
+    assert counts["eligible_rows"] == len(source) - 2
+    assert counts["model_scorable_rows"] == len(source) - 2
+    assert counts["unscorable_rows"] == 0
+    assert scored["source_row"].tolist() == list(range(2, len(source)))
+    assert duplicated not in predictor.scored_texts
+    assert scored["text"].tolist() == source.loc[2:, "text"].tolist()
+    assert scored["label"].tolist() == source.loc[2:, "label"].tolist()
+    assert scored["fake_probability"].tolist() == [
+        0.75 if label else 0.25 for label in source.loc[2:, "label"]
+    ]
+    assert scored["group_id"].tolist() == expected_group_ids
+    audit = counts["conflict_exclusions"]
+    assert audit == [{
+        "group_id": tt._duplicate_group_ids(
+            [duplicated, duplicated], np.array([0, 1]), source_rows=[0, 1],
+            allow_conflicting_labels=True,
+        )[0],
+        "rows": [{"source_row": 0, "label": 0}, {"source_row": 1, "label": 1}],
+    }]
+    persisted = pd.read_csv(csv_path)
+    assert persisted["text"].tolist() == source["text"].tolist()
+    assert persisted["label"].tolist() == source["label"].tolist()
 
 
 def test_group_split_requires_both_classes_in_multiple_groups():

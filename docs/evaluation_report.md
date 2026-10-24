@@ -8,11 +8,10 @@ on WELFake. Tuning a decision threshold on one WELFake half gives only a small i
 the held-out half. This is evidence of domain shift, not evidence that threshold adjustment
 solves generalization.
 
-This report transcribes the committed evaluation artifacts and repository-recorded ISOT
-metrics. It does **not** claim a fresh run: this checkout has no raw ISOT/WELFake CSVs or
-processed split CSVs. The JSON's recorded WELFake input path (`C:\fake-news-detector\data\raw\WELFake_Dataset.csv`)
-is from the original evaluation environment and is not a path in this checkout. The artifacts
-contain no run timestamp or dataset checksum.
+This report includes committed historical evaluation artifacts and repository-recorded ISOT
+metrics. Those artifacts are not automatically updated by local evaluation runs. Evaluation
+datasets are not committed; use the exact local input file and generated JSON to reproduce a
+run. The recorded historical WELFake artifact has no dataset checksum.
 
 ## Model and evaluation protocol
 
@@ -80,35 +79,64 @@ The model flagged 9,291 of 35,027 real articles as Fake (26.52%) and missed 1,59
 36,294 fake articles (4.39%). The weaker Real recall and higher predicted-Fake share are
 important alongside the aggregate accuracy.
 
-## Threshold protocol and recorded held-out results
+## Threshold protocol and held-out results
 
 `results/threshold_tuning.json` records the historical, row-stratified 50/50 WELFake split
 with seed 42:
 35,660 tuning rows and 35,661 held-out test rows. The best-F1 threshold (0.56) and
 best-balanced-accuracy threshold (0.65) were selected on the tuning half only. All metrics
-below are from the held-out test half. These committed values predate duplicate-aware splitting
-and have not been regenerated because the WELFake CSV is absent from this checkout; they are
-not results from the current grouped protocol.
+in the historical table are from the held-out test half. These committed values predate
+duplicate-aware splitting and are not results from the current grouped protocol.
 
 The current `scripts/threshold_tuning.py` groups exact normalized article bodies and
 conservative near-duplicate candidates before splitting. Near-duplicates of at least 12 words
 use word-trigram SimHash (Hamming distance <= 6), with seven fingerprint bands so pairs within
 that distance are candidates for comparison; connected candidates remain in the same group.
 Shorter bodies are grouped only on exact normalized text. This is a heuristic, not semantic
-verification, and its false-positive grouping may reduce the effective sample size. If a group
-contains conflicting labels, evaluation stops and reports source row positions rather than
-silently dropping examples. Tuning thresholds use only tuning groups; all reported test
-metrics use held-out groups.
+verification, and its false-positive grouping may reduce the effective sample size. Every row
+in a conflicting-label group is excluded from both threshold halves without resolving or
+overriding its source label. The generated threshold JSON records each excluded group ID,
+source-row index, label, and aggregate exclusion counts. Tuning thresholds use only eligible
+tuning groups; all reported test metrics use eligible held-out groups, with an assertion that
+group IDs are disjoint.
 
 | Setting | Threshold | Accuracy | Balanced accuracy | Precision (Fake) | Recall (Fake) | F1 (Fake) |
 |---|---:|---:|---:|---:|---:|---:|
-| Default | 0.50 | 84.56% | 84.36% | 78.68% | 95.54% | 86.30% |
-| Best F1 | 0.56 | 84.89% | 84.72% | 79.77% | 94.19% | 86.38% |
-| Best balanced accuracy | 0.65 | 85.19% | 85.07% | 81.69% | 91.36% | 86.26% |
+| Historical default | 0.50 | 84.56% | 84.36% | 78.68% | 95.54% | 86.30% |
+| Historical best F1 | 0.56 | 84.89% | 84.72% | 79.77% | 94.19% | 86.38% |
+| Historical best balanced accuracy | 0.65 | 85.19% | 85.07% | 81.69% | 91.36% | 86.26% |
 
-These settings trade recall for modestly better accuracy/precision. The model's deployed 0.5
-decision threshold was not changed. The threshold-test half remains WELFake, not a third
-independent dataset.
+### Current duplicate-aware WELFake run
+
+Run on 2026-10-24 with the locally supplied `data/raw/WELFake_Dataset.csv`
+(SHA-256 `665331424230FC452E9482C3547A6A199A2C29745ADE8D236950D1D105223773`), seed 42,
+body-only preprocessing, and no label flip. Of 72,134 raw rows, 71,351 remained after
+empty-body/missing-label filtering. Duplicate grouping found 8 conflicting-label groups
+containing 18 rows (8 label-0, 10 label-1); **all 18 rows were excluded from both halves**.
+No label was chosen or declared incorrect. The remaining 71,333 rows were eligible; the saved
+model produced scorable probabilities for 71,303, with 30 unscorable predictions.
+
+| Partition | Rows | Duplicate groups |
+|---|---:|---:|
+| Eligible tuning | 35,651 | 30,871 |
+| Eligible held-out test | 35,652 | 30,870 |
+
+The split is deterministic stratified group-aware splitting. The implementation asserts no
+duplicate-group ID crosses the boundary. The generated `threshold_tuning.json` contains the
+full conflict audit: each group ID and its source-row indices and original labels. There were
+61,778 groups before conflict exclusion, 61,770 eligible groups, and 738 near-duplicate groups
+under the configured heuristic.
+
+| Held-out setting | Threshold | Accuracy | Balanced accuracy | Precision (Fake) | Recall (Fake) | F1 (Fake) |
+|---|---:|---:|---:|---:|---:|---:|
+| Default | 0.50 | 84.68% | 84.48% | 78.78% | 95.66% | 86.40% |
+| Tuned best F1 | 0.54 | 84.89% | 84.71% | 79.48% | 94.77% | 86.46% |
+| Tuned best balanced accuracy | 0.64 | 85.02% | 84.89% | 81.20% | 91.82% | 86.18% |
+
+This is a threshold-selection experiment on WELFake, not an independent third-dataset
+evaluation. The saved classifier was not retrained, and its deployed 0.5 threshold was not
+changed. The separate fixed-threshold full-WELFake evaluation is unchanged. ISOT source data
+remains unavailable, so ISOT/WELFake overlap has not been checked.
 
 ## Leakage, duplicates, and preprocessing audit
 
@@ -121,9 +149,9 @@ independent dataset.
   must be generated from the original ISOT data by rerunning preprocessing.
 - The saved processed splits are absent here, so no current-checkout duplicate or
   near-duplicate count can be asserted.
-- The WELFake source CSV is also absent, so the new duplicate-grouped threshold evaluation
-  cannot be run here. The recorded row-split metrics above remain historical and do not
-  establish that duplicate groups were separated.
+- The committed row-split metrics above remain historical and do not establish that duplicate
+  groups were separated. A current grouped run must use its generated report and conflict
+  exclusion audit; conflicting labels are unresolved, not assumed incorrect.
 - The dataset's `subject` and `date` fields are excluded by design; model documentation
   separately identifies formatting/source cues in the learned text features. These
   artifacts can still correlate with labels even when structured columns are excluded.

@@ -94,8 +94,10 @@ class TestFakeNewsPredictor(unittest.TestCase):
     def test_result_has_expected_fields_and_is_json_serialisable(self):
         result = self.predictor.predict(REAL_STYLE)
         for key in ("label", "label_id", "fake_probability", "real_probability", "confidence",
-                    "confidence_level", "n_words", "n_known_terms", "warnings", "model_name", "disclaimer"):
+                    "probabilities_calibrated", "confidence_level", "n_words", "n_known_terms",
+                    "warnings", "model_name", "disclaimer"):
             self.assertIn(key, result)
+        self.assertIs(result["probabilities_calibrated"], False)
         json.dumps(result)  # must not raise (no numpy types left in the dict)
         self.assertAlmostEqual(result["fake_probability"] + result["real_probability"], 1.0, places=3)
         self.assertIn(result["label"], ("Fake", "Real"))
@@ -145,6 +147,7 @@ class TestFakeNewsPredictor(unittest.TestCase):
         result = self.predictor.predict("zzqx qwxz vvkk xxjq")
         self.assertEqual(result["label"], UNDETERMINED)
         self.assertIsNone(result["fake_probability"])
+        self.assertIsNone(result["probabilities_calibrated"])
         self.assertEqual(result["n_known_terms"], 0)
         self.assertTrue(result["warnings"])
 

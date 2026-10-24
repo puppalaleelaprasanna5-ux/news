@@ -170,6 +170,7 @@ class FakeNewsPredictor:
                 "label_id": None,
                 "fake_probability": None,
                 "real_probability": None,
+                "probabilities_calibrated": None,
                 "confidence": None,
                 "confidence_level": None,
             }
@@ -182,6 +183,7 @@ class FakeNewsPredictor:
                 "label_id": label_id,
                 "fake_probability": round(fake_prob, 4),
                 "real_probability": round(real_prob, 4),
+                "probabilities_calibrated": False,
                 "confidence": round(confidence, 4),
                 "confidence_level": self._confidence_level(confidence),
             }

@@ -179,6 +179,11 @@ class AnalysisService:
         except Exception:
             logger.exception("ML prediction failed")
             return _component("error", error="The ML prediction failed unexpectedly.", notice=ML_NOTICE)
+        result["probabilities_calibrated"] = (
+            False
+            if result.get("fake_probability") is not None or result.get("real_probability") is not None
+            else None
+        )
         return _component("ok", result=result, notice=ML_NOTICE, model_name=result.get("model_name"))
 
     # ----------------------------------------------------------------------- RAG

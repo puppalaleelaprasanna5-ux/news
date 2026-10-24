@@ -62,6 +62,7 @@ def _duplicate_group_ids(
     texts: list[str],
     labels: np.ndarray,
     source_rows: list[int] | None = None,
+    allow_conflicting_labels: bool = False,
 ) -> list[str]:
     """Return deterministic connected-component IDs for exact/near-duplicate bodies."""
     if len(texts) != len(labels):
@@ -127,7 +128,7 @@ def _duplicate_group_ids(
         rows for rows in components.values()
         if len({int(labels[index]) for index in rows}) > 1
     ]
-    if conflicting:
+    if conflicting and not allow_conflicting_labels:
         examples = [[rows[0], rows[-1]] for rows in conflicting[:3]]
         source_examples = [[source_rows[row] for row in example] for example in examples]
         raise ValueError(
@@ -137,6 +138,24 @@ def _duplicate_group_ids(
         )
 
     return [f"group-{min(components[find(index)])}" for index in range(len(texts))]
+
+
+def _conflicting_group_audit(
+    rows: pd.DataFrame,
+    labels: np.ndarray,
+    group_ids: list[str],
+) -> list[dict[str, Any]]:
+    """Describe mixed-label groups without changing or resolving their source labels."""
+    members: dict[str, list[dict[str, int]]] = {}
+    for source_row, label, group_id in zip(rows.index, labels, group_ids):
+        members.setdefault(group_id, []).append(
+            {"source_row": int(source_row), "label": int(label)}
+        )
+    return [
+        {"group_id": group_id, "rows": group_rows}
+        for group_id, group_rows in sorted(members.items())
+        if len({row["label"] for row in group_rows}) > 1
+    ]
 
 
 def _split_grouped_rows(rows: pd.DataFrame, seed: int = DEFAULT_SEED) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -164,8 +183,9 @@ def _split_grouped_rows(rows: pd.DataFrame, seed: int = DEFAULT_SEED) -> tuple[p
         )
     _, tune_idx, test_idx = min(candidates, key=lambda candidate: candidate[0])
     tuning, test = rows.iloc[tune_idx].copy(), rows.iloc[test_idx].copy()
-    if set(tuning["group_id"]) & set(test["group_id"]):
-        raise RuntimeError("Duplicate group crossed the tuning/test split.")
+    assert set(tuning["group_id"]).isdisjoint(test["group_id"]), (
+        "Duplicate group crossed the tuning/test split."
+    )
     return tuning, test
 
 
@@ -185,12 +205,23 @@ def score_dataset(csv_path: Path, models_dir: Path, flip_labels: bool, predictor
     y_true = _load_binary_labels(df[label_col], flip_labels)
     clean_texts = df["_clean"].tolist()
     source_rows = [int(row_index) for row_index in df.index]
-    group_ids = _duplicate_group_ids(clean_texts, y_true, source_rows)
+    group_ids = _duplicate_group_ids(
+        clean_texts, y_true, source_rows, allow_conflicting_labels=True
+    )
+    conflict_exclusions = _conflicting_group_audit(df, y_true, group_ids)
+    conflicting_group_ids = {group["group_id"] for group in conflict_exclusions}
+    conflict_mask = pd.Series(group_ids, index=df.index).isin(conflicting_group_ids)
+    eligible_df = df.loc[~conflict_mask].copy()
+    eligible_labels = y_true[~conflict_mask.to_numpy()]
+    eligible_group_ids = [
+        group_id for group_id in group_ids
+        if group_id not in conflicting_group_ids
+    ]
     predictor = predictor or load_predictor(models_dir)
-    results = predictor.predict_batch(df["text"].tolist())
-    if len(results) != len(df):
+    results = predictor.predict_batch(eligible_df["text"].tolist())
+    if len(results) != len(eligible_df):
         raise RuntimeError(
-            f"The model returned {len(results)} predictions for {len(df)} usable rows; "
+            f"The model returned {len(results)} predictions for {len(eligible_df)} eligible rows; "
             "cannot preserve article/label/score alignment."
         )
     records = []
@@ -200,11 +231,11 @@ def score_dataset(csv_path: Path, models_dir: Path, flip_labels: bool, predictor
             if not np.isfinite(float(p)) or not 0.0 <= float(p) <= 1.0:
                 continue
             records.append({
-                "source_row": int(df.index[i]),
-                "text": str(df.iloc[i]["text"]),
-                "label": int(y_true[i]),
+                "source_row": int(eligible_df.index[i]),
+                "text": str(eligible_df.iloc[i]["text"]),
+                "label": int(eligible_labels[i]),
                 "fake_probability": float(p),
-                "group_id": group_ids[i],
+                "group_id": eligible_group_ids[i],
             })
     if not records:
         raise RuntimeError("The model returned no scorable predictions.")
@@ -213,16 +244,24 @@ def score_dataset(csv_path: Path, models_dir: Path, flip_labels: bool, predictor
         group_id=group_ids,
         normalized_text=[" ".join(str(text).casefold().split()) for text in clean_texts],
     ).groupby("group_id")
+    grouped_eligible = eligible_df.assign(group_id=eligible_group_ids).groupby("group_id")
     counts = {
         "raw_rows": len(raw),
         "dropped_empty_rows": int((~keep).sum()),
+        "filtered_rows": int(len(df)),
+        "conflict_excluded_rows": int(conflict_mask.sum()),
+        "eligible_rows": int(len(eligible_df)),
         "scorable_rows": len(rows),
-        "unscorable_rows": int(len(df) - len(rows)),
+        "model_scorable_rows": int(len(rows)),
+        "unscorable_rows": int(len(eligible_df) - len(rows)),
         "duplicate_groups": int(grouped_usable.ngroups),
+        "conflict_excluded_groups": len(conflict_exclusions),
+        "eligible_groups": int(grouped_eligible.ngroups),
         "scorable_groups": int(rows["group_id"].nunique()),
         "near_duplicate_groups": int(sum(
             group["normalized_text"].nunique() > 1 for _, group in grouped_usable
         )),
+        "conflict_exclusions": conflict_exclusions,
     }
     return rows, counts
 
@@ -302,6 +341,7 @@ def run(csv_path: Path, models_dir: Path, output_dir: Path, flip_labels: bool = 
             "tune_groups": int(tune_rows["group_id"].nunique()),
             "test_groups": int(test_rows["group_id"].nunique()),
             "flip_labels_applied": bool(flip_labels),
+            "tune_test_groups_disjoint": set(tune_rows["group_id"]).isdisjoint(test_rows["group_id"]),
             **counts,
         },
         "chosen_on_tuning_half": {"best_f1_threshold": f1_thr, "best_balanced_accuracy_threshold": bal_thr},
@@ -313,7 +353,7 @@ def run(csv_path: Path, models_dir: Path, output_dir: Path, flip_labels: bool = 
         "notes": [
             "All metrics in 'test_half' were computed on duplicate groups never used to choose the threshold.",
             "Near-duplicate grouping is a conservative SimHash heuristic; review its method and limitations before interpreting results.",
-            "Rows in an exact/near-duplicate group with conflicting labels stop evaluation and are reported for review, not discarded.",
+            "All rows in conflicting-label duplicate groups are excluded from both threshold halves and recorded in conflict_exclusions; their labels are unresolved, not presumed incorrect.",
             "Only the decision threshold changed; the model was not retrained.",
             "The tuning and test halves are both WELFake, so this does not show generalization to a third dataset.",
         ],
@@ -321,11 +361,11 @@ def run(csv_path: Path, models_dir: Path, output_dir: Path, flip_labels: bool = 
     output_dir.mkdir(parents=True, exist_ok=True)
     _plot_sweep(rows, f1_thr, bal_thr, output_dir / "threshold_sweep.png")
     (output_dir / "threshold_tuning.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
-    _print_table(result)
+    _print_table(result, output_dir)
     return result
 
 
-def _print_table(result: dict[str, Any]) -> None:
+def _print_table(result: dict[str, Any], output_dir: Path) -> None:
     print("\nTHRESHOLD TUNING: metrics on the held-out TEST half only")
     print(f"{'Setting':<28} {'Thr':>5} {'Acc':>8} {'BalAcc':>8} {'Prec':>8} {'Rec':>8} {'F1':>8} {'Pred Fake %':>12}")
     print("-" * 94)
@@ -337,7 +377,8 @@ def _print_table(result: dict[str, Any]) -> None:
     print(f"\nThresholds were chosen on {result['split']['tune_rows']} tuning rows "
           f"({result['split']['tune_groups']} groups); reported on {result['split']['test_rows']} "
           f"held-out rows ({result['split']['test_groups']} groups, seed {result['split']['seed']}).")
-    print("Saved: results/threshold_tuning.json and results/threshold_sweep.png")
+    print(f"Saved: {output_dir / 'threshold_tuning.json'}")
+    print(f"Saved: {output_dir / 'threshold_sweep.png'}")
 
 
 def build_parser() -> argparse.ArgumentParser:

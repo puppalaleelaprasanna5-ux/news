@@ -675,8 +675,8 @@ The ISOT-trained TF-IDF + Logistic Regression model was evaluated, **without ret
 WELFake (body text only, matching the training input; 783 empty rows dropped, 30 unscorable). Reproduce with
 `python scripts/cross_dataset_eval.py` (check labels first with `--preview-only`). The dashboard's **Evaluation** tab shows the saved results.
 The complete provenance, per-class metrics, leakage/calibration status, limitations, and recommendations are in
-[docs/evaluation_report.md](docs/evaluation_report.md). The checked-in JSON represents a prior run; this checkout does
-not include the raw WELFake CSV or processed ISOT splits, so these results cannot currently be regenerated here.
+[docs/evaluation_report.md](docs/evaluation_report.md). The checked-in JSON represents a prior run; source datasets
+are not committed to the repository and must be supplied locally to reproduce evaluation.
 
 From the repository root, after obtaining WELFake and placing it at `data/raw/WELFake_Dataset.csv` (or supplying
 `--input-csv PATH`), run the reproducible evaluation commands:
@@ -698,27 +698,43 @@ probability diagnostics. Those diagnostics do not calibrate the model. To audit 
 
 Accuracy fell by about 14 points. On WELFake the model flagged 9,291 real articles as Fake (26.5% of real articles) and missed 1,593 fake ones (4.4%).
 
-**Threshold tuning does not fix it** (`python scripts/threshold_tuning.py`). The committed numbers below are from a
-historical row-stratified split: the decision threshold was chosen on one half of WELFake and metrics calculated on
-the other (35,661 rows, seed 42). The current script groups exact and conservative near-duplicate articles before
-splitting; these historical values have not been regenerated with that protocol because the WELFake CSV is not included:
+**Threshold tuning does not fix it** (`python scripts/threshold_tuning.py`). The checked-in numbers below are from a
+historical row-stratified split (35,661 held-out rows, seed 42). A current duplicate-aware run is reported separately
+below; its generated JSON includes the conflict-group audit.
 
 The current script keeps exact normalized duplicates together and groups near-duplicate
 candidate articles (at least 12 words) with word-trigram SimHash, Hamming distance <= 6.
 Seven disjoint fingerprint bands make pairs within that Hamming distance candidates for
 comparison. Near-duplicate groups are a heuristic and can reduce the effective sample size;
-shorter texts are grouped only on exact normalized text. Conflicting labels within any group
-stop evaluation with the affected source row positions reported—examples are never silently
-discarded. Metrics in `results/threshold_tuning.json` remain from the previous row split until
-the missing WELFake CSV is supplied and the script is rerun.
+shorter texts are grouped only on exact normalized text. Every row in a duplicate group with
+conflicting labels is excluded from both threshold halves; no label is selected or presumed
+wrong. The generated `threshold_tuning.json` records each excluded group ID, source-row index,
+label, and exclusion counts. The checked-in `results/threshold_tuning.json` remains from the
+previous row split until it is regenerated with the current grouped protocol.
 
 | Setting | Threshold | Accuracy | Balanced acc. | Precision | Recall | F1 |
 |---|---|---|---|---|---|---|
-| Default | 0.50 | 84.56% | 84.36% | 78.68% | 95.54% | 86.30% |
-| Tuned (best F1) | 0.56 | 84.89% | 84.72% | 79.77% | 94.19% | 86.38% |
-| Tuned (best balanced accuracy) | 0.65 | 85.19% | 85.07% | 81.69% | 91.36% | 86.26% |
+| Historical default | 0.50 | 84.56% | 84.36% | 78.68% | 95.54% | 86.30% |
+| Historical tuned (best F1) | 0.56 | 84.89% | 84.72% | 79.77% | 94.19% | 86.38% |
+| Historical tuned (best balanced accuracy) | 0.65 | 85.19% | 85.07% | 81.69% | 91.36% | 86.26% |
 
-Tuning recovers only 0.3 to 0.6 accuracy points, so the drop comes from features that transfer imperfectly, not from the cutoff.
+**Current grouped threshold run (2026-10-24):** using the locally supplied WELFake CSV
+(SHA-256 `665331424230FC452E9482C3547A6A199A2C29745ADE8D236950D1D105223773`), 72,134 raw
+rows yielded 71,351 rows after body/label filtering. The duplicate grouping found 8 mixed-label
+groups (18 rows), all excluded from tuning and test; 71,333 rows remained eligible, of which
+71,303 were scorable. The deterministic stratified group split contained 35,651 tuning rows
+(30,871 groups) and 35,652 held-out rows (30,870 groups); group IDs were disjoint.
+
+| Held-out setting | Threshold | Accuracy | Balanced acc. | Precision | Recall | F1 |
+|---|---:|---:|---:|---:|---:|---:|
+| Default | 0.50 | 84.68% | 84.48% | 78.78% | 95.66% | 86.40% |
+| Tuned (best F1) | 0.54 | 84.89% | 84.71% | 79.48% | 94.77% | 86.46% |
+| Tuned (best balanced accuracy) | 0.64 | 85.02% | 84.89% | 81.20% | 91.82% | 86.18% |
+
+These are threshold-tuning results, not an independent dataset evaluation. The separate
+fixed-threshold full-WELFake evaluation above is unchanged. The detailed exclusion audit is
+written into the generated `threshold_tuning.json`; each group lists its stable group ID and
+source-row indices with labels, without claiming any label is wrong.
 
 **Limitations of this evaluation:** WELFake is a compilation of public sources and may partly overlap with ISOT-style sources, so the figures may overestimate true out-of-domain performance; WELFake labels are noisy; both tuning halves are WELFake, so tuned results say nothing about a third dataset; and one external dataset does not establish general robustness. The classifier recognises writing style and wording, not factual truth.
 
@@ -1049,7 +1065,7 @@ curl -X POST http://127.0.0.1:8000/analyze -H "Content-Type: application/json" \
   -d '{"text": "Some headline", "claims": ["Library membership is free for all residents."], "top_k": 2}'
 ```
 
-Request fields: `text` (required, max 20,000 characters), `claims` (optional list of at most 5 strings, each max 20,000 characters), `run_rag` (default true), `top_k` (1-10, default 3). Requests exceeding the claim count or length limits receive HTTP 422 `invalid_request`.
+Request fields: `text` (required, max 20,000 characters), `claims` (optional list of at most 5 strings, each max 20,000 characters), `run_rag` (default true), `top_k` (1-10, default 3). Invalid inputs receive HTTP 422 with the same structured error shape, whether rejected by request parsing or service validation.
 
 `GET /health` returns `{"api": "ok", "status": "ok" | "degraded" | "unavailable", "components": {"ml_model": ..., "rag": ...}}` (always HTTP 200 while the API itself is up).
 
@@ -1059,7 +1075,8 @@ Request fields: `text` (required, max 20,000 characters), `claims` (optional lis
 {
   "input": {"char_count": 0, "word_count": 0, "input_kind": "headline_or_short_text | article"},
   "components": {
-    "ml_prediction":  {"status": "ok|unavailable|error", "result": {"label": "...", "fake_probability": 0.0, "...": "..."}, "error": null, "notice": "..."},
+    "ml_prediction":  {"status": "ok|unavailable|error", "result": {"label": "...", "fake_probability": 0.0,
+                         "probabilities_calibrated": false, "...": "..."}, "error": null, "notice": "..."},
     "evidence":       {"status": "ok|unavailable|error|skipped", "claim_source": "manual|input_text|heuristic|none",
                        "claims": [{"claim": "...", "retrieval_status": "evidence_retrieved|no_relevant_evidence|retrieval_unavailable|invalid_claim",
                                    "retrieved_evidence": [{"text": "...", "source": "file.txt", "page": null, "chunk_id": 0, "rank": 1,
@@ -1083,7 +1100,16 @@ Request fields: `text` (required, max 20,000 characters), `claims` (optional lis
 }
 ```
 
-(Values above are placeholders showing the shape only; real values are computed per request.) Errors: empty/too-long input -> HTTP 422 `{"error": "invalid_input", "message": "..."}`; malformed request -> 422 `{"error": "invalid_request", "problems": [...]}`; unexpected server failure -> 500 `{"error": "internal_error", ...}` with no details.
+(Values above are placeholders showing the shape only; real values are computed per request.) `POST /analyze` publishes a typed `AnalyzeResponse` schema in OpenAPI; nested component models allow additive fields so partial failures and evidence metadata remain compatible. Probabilities, when present, are uncalibrated (`probabilities_calibrated: false`); unscorable predictions return null probabilities and calibration status.
+
+All request-validation failures return HTTP 422 with this shape, and submitted article text is never echoed:
+
+```json
+{"error": "invalid_input", "message": "The request was not valid.",
+ "problems": [{"field": "text", "message": "This value exceeds the maximum allowed length."}]}
+```
+
+Unexpected server failure -> HTTP 500 `{"error": "internal_error", ...}` with no details.
 
 `credibility_assessment` is additive; the existing `components` and `final_assessment` fields remain for compatibility.
 Retrieved passages have source names and only metadata available in the index. Evidence is `unclassified` when passages
