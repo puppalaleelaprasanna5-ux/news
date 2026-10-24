@@ -23,11 +23,10 @@ for directory in (str(FRONTEND_DIR), str(PROJECT_ROOT)):
 
 import streamlit as st
 
-# Import sibling frontend modules directly to avoid the "app is not a package" conflict.
-import render
-import results_view
+# Keep package-qualified imports so AppTest and the page share the same modules.
+from app.frontend import render, results_view
 
-from helpers import (
+from app.frontend.helpers import (
     ANALYZE_TIMEOUT,
     API_START_COMMAND,
     BACKEND_URL,

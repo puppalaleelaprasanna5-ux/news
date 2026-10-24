@@ -29,6 +29,8 @@ seaborn==0.13.2
 fastapi==0.115.5
 uvicorn==0.32.1
 streamlit==1.40.1
+# Streamlit requires PyArrow; pin to a release compatible with numpy==1.26.4.
+pyarrow==18.1.0
 
 # --- Configuration / secrets management ---
 python-dotenv==1.0.1

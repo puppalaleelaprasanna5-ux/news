@@ -10,8 +10,8 @@ Phase 3 (Exploratory Data Analysis) complete.
 Phase 4 (Machine Learning Baseline) complete.
 Phase 5 (Inference Pipeline & Application Readiness) complete (Dependency issue fixed: scikit-learn==1.8.0).
 Phase 6 (Llama 3.1 8B integration) was **removed**: it needs more memory than the target machine has. See "Phase 6 (removed)" below.
-Phase 7 (FAISS + RAG Evidence Retrieval) complete. Author-reported: on the author's Windows machine (Git Bash, Python 3.13.14) the demo index built from the three synthetic sample documents (5 chunks, `data/rag/demo_index`). The assistant that wrote this code could not install `faiss-cpu` or `sentence-transformers` in its sandbox, so those real-library checks were not re-run by it (see "Phase 7 -> Verification status").
-Phase 8 (Final Integration: FastAPI backend + Streamlit dashboard) implemented. See "Phase 8" below for exactly what was and was not tested.
+Phase 7 (FAISS + RAG Evidence Retrieval) complete. The real-dependency checks are in `tests/test_rag_real_dependencies.py`; see the current verification record below.
+Phase 8 (FastAPI backend + Streamlit dashboard) implemented. See the current verification record below for exact test scope and results.
 
 ## Tech Stack
 
@@ -131,18 +131,29 @@ python -m pip install --upgrade pip
 ### 5. Install dependencies
 
 ```bat
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-This may take a few minutes, especially for `faiss-cpu` and `xgboost`.
+This may take a few minutes, especially for `faiss-cpu`, `xgboost`, and `sentence-transformers`.
+`pyarrow==18.1.0` is pinned because Streamlit depends on PyArrow; PyArrow 26.0.0 failed to
+import with the project's `numpy==1.26.4` pin, requiring NumPy 2.0 or newer.
+For an already-created environment that has the incompatible PyArrow version, apply the pin
+without changing NumPy:
+
+```bat
+python -m pip install pyarrow==18.1.0
+```
 
 ### 6. Verify installation
 
 ```bat
-python -c "import sklearn, xgboost, pandas, numpy, fastapi, streamlit, faiss, dotenv; print('All packages imported successfully')"
+python -c "import torch; import numpy, pandas, pyarrow, sklearn, xgboost, fastapi, streamlit, faiss, sentence_transformers, transformers, pypdf, dotenv; print('numpy', numpy.__version__, '| pandas', pandas.__version__, '| pyarrow', pyarrow.__version__, '| scikit-learn', sklearn.__version__, '| streamlit', streamlit.__version__); print('All packages imported successfully')"
+python -m pip check
 ```
 
-You should see `All packages imported successfully` with no errors.
+Import PyTorch first to initialize its Windows native libraries before the other ML packages.
+The version output should include NumPy `1.26.4` and PyArrow `18.1.0`; the import command and
+`pip check` should both complete successfully.
 
 ### 7. Set up environment variables
 
@@ -751,19 +762,15 @@ Phase 7 adds `sentence-transformers==3.3.1` (which installs PyTorch and `transfo
 
 ### Dependency check
 
-Run these after installing (they are the checks that could not be run when Phase 7 was written):
-
 ```bash
-pip check
-python -c "import faiss, sentence_transformers, pypdf; print('faiss', faiss.__version__, '| sentence-transformers', sentence_transformers.__version__)"
-python -m pytest tests/test_rag_real_dependencies.py -v -rs   # real FAISS + real model; see "Running the tests"
+python -m pip check
+python -c "import torch; import numpy, pyarrow, pandas, streamlit, sklearn, faiss, sentence_transformers, transformers; print('numpy', numpy.__version__, '| pyarrow', pyarrow.__version__, '| pandas', pandas.__version__, '| streamlit', streamlit.__version__, '| scikit-learn', sklearn.__version__, '| faiss', faiss.__version__, '| sentence-transformers', sentence_transformers.__version__, '| torch', torch.__version__, '| transformers', transformers.__version__)"
+python -m pytest tests/test_rag_real_dependencies.py -v -rs
 ```
 
-**Possible OpenMP conflict (not observed in this project - the libraries were never installed together here).** If Python
-crashes or prints `OMP: Error #15 ... already initialized` once FAISS and PyTorch are both loaded (a known duplicate
-OpenMP-runtime problem on Windows/macOS), the usual workaround is to set the environment variable
-`KMP_DUPLICATE_LIB_OK=TRUE` before starting Python (`set KMP_DUPLICATE_LIB_OK=TRUE` in Command Prompt). It is a workaround,
-not a fix.
+The RAG integration tests use the actual `faiss-cpu` library and actual Sentence Transformers model. The
+first model use may download the configured model from Hugging Face; later runs can use the local cache.
+They skip if those dependencies or model files are unavailable; a skip is unverified, not a pass.
 
 ### Embedding model setup
 
@@ -1083,6 +1090,15 @@ python -m pytest tests/test_phase8_service.py tests/test_phase8_assessment.py te
 
 Use `-rs` and read the skip reasons: a skipped test is **unverified**, not passed. Tests that need a real FAISS index (or `streamlit`, `fastapi`, `httpx`) skip when that package is missing. With real pytest a module-level skip (for example `test_rag_retrieval.py` without `faiss`) is reported as **one** skip for the whole module, so totals differ between environments; compare passed/failed/skipped, not the grand total. Tests that check the *error messages* for missing FAISS and for each index failure run in every environment. Phase 8 tests use the real saved ML model, fake embedding components (no model download), and (for retrieval) a real FAISS index built with a tiny test embedder. `tests/test_rag_real_dependencies.py` is the Phase 7 check against real `faiss-cpu` + the real embedding model (needs the model downloaded; it skips otherwise).
 
+On Windows, if the real RAG tests raise a PyTorch `c10.dll` initialization error when run in the same pytest process as the other native-library tests, run the suite in two processes:
+
+```powershell
+python -m pytest tests\ --ignore=tests\test_rag_real_dependencies.py -q -rs
+python -m pytest tests\test_rag_real_dependencies.py -q -rs
+```
+
+This still executes the entire test set; keep the real-dependency run separate and inspect its result rather than treating it as skipped or passed based on the other command. In this environment, setting `KMP_DUPLICATE_LIB_OK=TRUE` did not resolve the combined-process failure.
+
 ### Final fix: missing FAISS vs missing index (what was actually run)
 
 *Historical log: written before Llama/Ollama was removed, so mentions of them describe the project as it was at the time.*
@@ -1174,3 +1190,32 @@ The sandbox where Phase 8 was written had **no internet access**: `fastapi`, `uv
 
 - This system is a **fake-news detection and credibility analysis tool**, not an absolute truth detector. It never claims "100% fake" or "100% true" without authoritative evidence.
 - ML predictions and retrieved evidence are always presented as clearly separate, labeled sections.
+
+## Current verification record (2026-10-24)
+
+This record supersedes the older environment/test summaries above where they conflict.
+
+- Tested in the repository `.venv` on Python 3.12.10. Key versions: NumPy 1.26.4,
+  PyArrow 18.1.0, Pandas 2.2.3, Streamlit 1.40.1, scikit-learn 1.8.0,
+  faiss-cpu 1.9.0, sentence-transformers 3.3.1, PyTorch 2.14.1+cpu, and
+  Transformers 4.57.6. `python -m pip check` reported no broken requirements.
+- PyArrow is pinned directly in `requirements.txt`: Streamlit depends on PyArrow but
+  otherwise allows a newer release that failed to import with this project's NumPy 1.26.4.
+- Import verification passed for the versions above. Use the project environment's Python,
+  e.g. `.venv\Scripts\python.exe` in PowerShell; a separately installed global Python is not
+  the environment used for these checks.
+- Focused reliability/API/frontend tests: **99 passed**, 15 warnings. Streamlit AppTest files:
+  **29 passed**, 1 warning. Real Sentence Transformers + FAISS integration file:
+  **13 passed**, no skips.
+- Complete suite in one pytest process: **not clean** on this Windows environment; 13 real
+  RAG integration cases failed while PyTorch loaded `c10.dll` after other native-library tests.
+  The documented split-process runs cover all tests: **216 passed** outside the real RAG file,
+  then **13 passed** in that file. Do not combine these into a claim that the one-process run passed.
+- FastAPI `/health` and `/analyze` were exercised through the real FastAPI app with the saved
+  classifier, actual Sentence Transformers model, and an actual FAISS index. The index was
+  built offline at the configured `data/rag/index` path from the project's fictional sample
+  documents (three sources, five chunks); the API marked retrieved evidence unclassified and
+  did not return a verdict.
+- Evaluation numbers in [docs/evaluation_report.md](docs/evaluation_report.md) remain recorded
+  results from committed artifacts, not newly regenerated metrics: raw ISOT/WELFake CSVs and
+  processed ISOT splits are absent from this checkout. No independent dataset was downloaded.
