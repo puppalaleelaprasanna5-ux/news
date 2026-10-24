@@ -256,6 +256,8 @@ class AnalysisService:
 
     @staticmethod
     def _dedupe_claims(claims, limit: int) -> List[str]:
+        if limit <= 0:
+            return []
         seen, out = set(), []
         for claim in claims or []:
             text = claim.strip() if isinstance(claim, str) else ""
@@ -263,7 +265,9 @@ class AnalysisService:
             if text and key not in seen:
                 seen.add(key)
                 out.append(text)
-        return out[:limit]
+                if len(out) == limit:
+                    break
+        return out
 
     def _run_rag(self, text: str, options: AnalysisOptions) -> Dict[str, Any]:
         base = {"claim_source": "none", "claims": [], "notice": EVIDENCE_NOTICE}

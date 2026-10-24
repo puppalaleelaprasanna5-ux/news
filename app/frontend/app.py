@@ -23,18 +23,34 @@ for directory in (str(FRONTEND_DIR), str(PROJECT_ROOT)):
 
 import streamlit as st
 
-# Keep package-qualified imports so AppTest and the page share the same modules.
-from app.frontend import render, results_view
+# Prefer package imports for AppTest; Streamlit's standalone script can shadow the
+# top-level `app` package, in which case these sibling imports are the correct fallback.
+try:
+    from app.frontend import render, results_view
+    from app.frontend.helpers import (
+        ANALYZE_TIMEOUT,
+        API_START_COMMAND,
+        BACKEND_URL,
+        HEALTH_TIMEOUT,
+        KIND_UNREACHABLE,
+        call_api_ex,
+        parse_manual_claims,
+    )
+except ModuleNotFoundError as error:
+    if error.name != "app.frontend":
+        raise
+    import render
+    import results_view
 
-from app.frontend.helpers import (
-    ANALYZE_TIMEOUT,
-    API_START_COMMAND,
-    BACKEND_URL,
-    HEALTH_TIMEOUT,
-    KIND_UNREACHABLE,
-    call_api_ex,
-    parse_manual_claims,
-)
+    from helpers import (
+        ANALYZE_TIMEOUT,
+        API_START_COMMAND,
+        BACKEND_URL,
+        HEALTH_TIMEOUT,
+        KIND_UNREACHABLE,
+        call_api_ex,
+        parse_manual_claims,
+    )
 
 MAX_CHARS = 20000
 PLACEHOLDER_CHOICE = "Choose an example…"

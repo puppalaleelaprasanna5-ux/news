@@ -698,8 +698,19 @@ probability diagnostics. Those diagnostics do not calibrate the model. To audit 
 
 Accuracy fell by about 14 points. On WELFake the model flagged 9,291 real articles as Fake (26.5% of real articles) and missed 1,593 fake ones (4.4%).
 
-**Threshold tuning does not fix it** (`python scripts/threshold_tuning.py`). The decision threshold was chosen on one half of
-WELFake and all numbers below come from the other, held-out half (35,661 rows, seed 42):
+**Threshold tuning does not fix it** (`python scripts/threshold_tuning.py`). The committed numbers below are from a
+historical row-stratified split: the decision threshold was chosen on one half of WELFake and metrics calculated on
+the other (35,661 rows, seed 42). The current script groups exact and conservative near-duplicate articles before
+splitting; these historical values have not been regenerated with that protocol because the WELFake CSV is not included:
+
+The current script keeps exact normalized duplicates together and groups near-duplicate
+candidate articles (at least 12 words) with word-trigram SimHash, Hamming distance <= 6.
+Seven disjoint fingerprint bands make pairs within that Hamming distance candidates for
+comparison. Near-duplicate groups are a heuristic and can reduce the effective sample size;
+shorter texts are grouped only on exact normalized text. Conflicting labels within any group
+stop evaluation with the affected source row positions reported—examples are never silently
+discarded. Metrics in `results/threshold_tuning.json` remain from the previous row split until
+the missing WELFake CSV is supplied and the script is rerun.
 
 | Setting | Threshold | Accuracy | Balanced acc. | Precision | Recall | F1 |
 |---|---|---|---|---|---|---|
@@ -1038,7 +1049,7 @@ curl -X POST http://127.0.0.1:8000/analyze -H "Content-Type: application/json" \
   -d '{"text": "Some headline", "claims": ["Library membership is free for all residents."], "top_k": 2}'
 ```
 
-Request fields: `text` (required, max 20,000 characters), `claims` (optional list), `run_rag` (default true), `top_k` (1-10, default 3).
+Request fields: `text` (required, max 20,000 characters), `claims` (optional list of at most 5 strings, each max 20,000 characters), `run_rag` (default true), `top_k` (1-10, default 3). Requests exceeding the claim count or length limits receive HTTP 422 `invalid_request`.
 
 `GET /health` returns `{"api": "ok", "status": "ok" | "degraded" | "unavailable", "components": {"ml_model": ..., "rag": ...}}` (always HTTP 200 while the API itself is up).
 

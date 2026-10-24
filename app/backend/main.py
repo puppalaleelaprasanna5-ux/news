@@ -16,7 +16,7 @@ receives a generic message.
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from src.credibility.service import (
     DEFAULT_RAG_TOP_K,
+    MAX_CLAIMS,
     MAX_INPUT_CHARS,
     AnalysisOptions,
     AnalysisService,
@@ -36,8 +37,13 @@ logger = logging.getLogger("fake_news_api")
 
 class AnalyzeRequest(BaseModel):
     text: str = Field(..., max_length=MAX_INPUT_CHARS * 2, description="Headline or article text.")
-    claims: Optional[List[str]] = Field(
-        default=None, description="Optional claims to search evidence for; if omitted, claims are selected from the text by rules."
+    claims: Optional[List[Annotated[str, Field(max_length=MAX_INPUT_CHARS)]]] = Field(
+        default=None,
+        max_length=MAX_CLAIMS,
+        description=(
+            f"Optional claims to search for (at most {MAX_CLAIMS}, each at most {MAX_INPUT_CHARS} characters); "
+            "if omitted, claims are selected from the text by rules."
+        ),
     )
     run_rag: bool = True
     top_k: int = Field(default=DEFAULT_RAG_TOP_K, ge=1, le=10)

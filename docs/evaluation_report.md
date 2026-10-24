@@ -82,10 +82,23 @@ important alongside the aggregate accuracy.
 
 ## Threshold protocol and recorded held-out results
 
-`results/threshold_tuning.json` records a stratified 50/50 WELFake split with seed 42:
+`results/threshold_tuning.json` records the historical, row-stratified 50/50 WELFake split
+with seed 42:
 35,660 tuning rows and 35,661 held-out test rows. The best-F1 threshold (0.56) and
 best-balanced-accuracy threshold (0.65) were selected on the tuning half only. All metrics
-below are from the held-out test half.
+below are from the held-out test half. These committed values predate duplicate-aware splitting
+and have not been regenerated because the WELFake CSV is absent from this checkout; they are
+not results from the current grouped protocol.
+
+The current `scripts/threshold_tuning.py` groups exact normalized article bodies and
+conservative near-duplicate candidates before splitting. Near-duplicates of at least 12 words
+use word-trigram SimHash (Hamming distance <= 6), with seven fingerprint bands so pairs within
+that distance are candidates for comparison; connected candidates remain in the same group.
+Shorter bodies are grouped only on exact normalized text. This is a heuristic, not semantic
+verification, and its false-positive grouping may reduce the effective sample size. If a group
+contains conflicting labels, evaluation stops and reports source row positions rather than
+silently dropping examples. Tuning thresholds use only tuning groups; all reported test
+metrics use held-out groups.
 
 | Setting | Threshold | Accuracy | Balanced accuracy | Precision (Fake) | Recall (Fake) | F1 (Fake) |
 |---|---:|---:|---:|---:|---:|---:|
@@ -108,6 +121,9 @@ independent dataset.
   must be generated from the original ISOT data by rerunning preprocessing.
 - The saved processed splits are absent here, so no current-checkout duplicate or
   near-duplicate count can be asserted.
+- The WELFake source CSV is also absent, so the new duplicate-grouped threshold evaluation
+  cannot be run here. The recorded row-split metrics above remain historical and do not
+  establish that duplicate groups were separated.
 - The dataset's `subject` and `date` fields are excluded by design; model documentation
   separately identifies formatting/source cues in the learned text features. These
   artifacts can still correlate with labels even when structured columns are excluded.

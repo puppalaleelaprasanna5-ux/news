@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-"""Threshold tuning for the saved ISOT model on WELFake, with a strict tune/test split.
+"""Threshold tuning for the saved ISOT model on WELFake, with a grouped tune/test split.
 
 Why: on WELFake the model keeps good ranking (ROC-AUC ~0.92) but its fixed 0.5 cutoff
 over-predicts Fake. This script measures how much of the accuracy drop is just a
 miscalibrated threshold, WITHOUT retraining.
 
-Protocol (no leakage):
-  1. Stratified 50/50 split of WELFake (fixed seed, saved in the JSON).
+Protocol (duplicate-safe):
+  1. Group exact duplicates and conservative near-duplicates, then make a deterministic
+     stratified 50/50 group split of WELFake (fixed seed, saved in the JSON).
   2. The threshold is chosen on the TUNING half only.
-  3. Every reported metric comes from the TEST half only, at 0.5 and at the tuned threshold.
+  3. Every reported metric comes from the held-out TEST groups only, at 0.5 and at the
+     tuned threshold.
+
+Near-duplicate candidates use the project's word-trigram SimHash fingerprint and Hamming
+distance <= 6. Candidate pairs are transitively grouped to prevent related rows crossing
+the split. This is a conservative heuristic, not semantic duplicate verification.
 
 Same input policy as cross_dataset_eval.py: article BODY only, same cleaning, saved model.
 Run scripts/cross_dataset_eval.py --preview-only first to confirm the label mapping.
@@ -30,7 +36,7 @@ from sklearn.metrics import (
     accuracy_score, balanced_accuracy_score, confusion_matrix, f1_score,
     precision_score, recall_score, roc_auc_score,
 )
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedGroupKFold
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -42,14 +48,129 @@ from scripts.cross_dataset_eval import (  # noqa: E402
     _normalise_columns, _per_class_metrics,
 )
 from src.models.predict import load_predictor  # noqa: E402
+from src.preprocessing.split_data import SIMHASH_BITS, _simhash  # noqa: E402
 from src.preprocessing.text_cleaning import clean_single_text  # noqa: E402
 
 DEFAULT_SEED = 42
 THRESHOLD_GRID = np.round(np.arange(0.05, 0.951, 0.01), 2)
+NEAR_DUPLICATE_MAX_HAMMING_DISTANCE = 6
+_SIMHASH_BAND_WIDTHS = (10, 9, 9, 9, 9, 9, 9)
+_MIN_WORDS_FOR_NEAR_DUPLICATE = 12
+
+
+def _duplicate_group_ids(
+    texts: list[str],
+    labels: np.ndarray,
+    source_rows: list[int] | None = None,
+) -> list[str]:
+    """Return deterministic connected-component IDs for exact/near-duplicate bodies."""
+    if len(texts) != len(labels):
+        raise ValueError("Texts and labels must have the same number of rows.")
+    if source_rows is None:
+        source_rows = list(range(len(texts)))
+    if len(source_rows) != len(texts):
+        raise ValueError("Source row identities must align with texts and labels.")
+
+    parent = list(range(len(texts)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root, right_root = find(left), find(right)
+        if left_root != right_root:
+            parent[max(left_root, right_root)] = min(left_root, right_root)
+
+    normalized = [" ".join(str(text).casefold().split()) for text in texts]
+    exact_rows: dict[str, int] = {}
+    for index, text in enumerate(normalized):
+        if text in exact_rows:
+            union(index, exact_rows[text])
+        else:
+            exact_rows[text] = index
+
+    # Seven disjoint bands guarantee that fingerprints within Hamming distance 6 share
+    # at least one band; exact hamming verification removes band-collision false positives.
+    fingerprints: dict[int, int] = {}
+    offset = 0
+    for band, width in enumerate(_SIMHASH_BAND_WIDTHS):
+        if width <= 0 or offset + width > SIMHASH_BITS:
+            raise RuntimeError("Invalid SimHash band configuration.")
+        mask = (1 << width) - 1
+        candidates_by_band: dict[int, list[tuple[int, int]]] = {}
+        for index, text in enumerate(normalized):
+            if len(text.split()) < _MIN_WORDS_FOR_NEAR_DUPLICATE:
+                continue
+            if index not in fingerprints:
+                fingerprints[index] = _simhash(text)
+            fingerprint = fingerprints[index]
+            value = (fingerprint >> offset) & mask
+            candidates_by_band.setdefault(value, []).append((index, fingerprint))
+
+        for same_band in candidates_by_band.values():
+            for position, (index, fingerprint) in enumerate(same_band):
+                for other_index, other_fingerprint in same_band[:position]:
+                    if (fingerprint ^ other_fingerprint).bit_count() <= NEAR_DUPLICATE_MAX_HAMMING_DISTANCE:
+                        union(index, other_index)
+        offset += width
+    if offset != SIMHASH_BITS:
+        raise RuntimeError("SimHash bands must cover the fingerprint.")
+
+    components: dict[int, list[int]] = {}
+    for index in range(len(texts)):
+        components.setdefault(find(index), []).append(index)
+
+    conflicting = [
+        rows for rows in components.values()
+        if len({int(labels[index]) for index in rows}) > 1
+    ]
+    if conflicting:
+        examples = [[rows[0], rows[-1]] for rows in conflicting[:3]]
+        source_examples = [[source_rows[row] for row in example] for example in examples]
+        raise ValueError(
+            f"Found {len(conflicting)} exact/near-duplicate group(s) with conflicting labels; "
+            f"review source CSV row positions (zero-based): {source_examples}. "
+            "No conflicting examples were dropped."
+        )
+
+    return [f"group-{min(components[find(index)])}" for index in range(len(texts))]
+
+
+def _split_grouped_rows(rows: pd.DataFrame, seed: int = DEFAULT_SEED) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split rows reproducibly while keeping each duplicate group wholly in one half."""
+    labels = rows["label"].to_numpy(dtype=int)
+    groups = rows["group_id"].to_numpy()
+    if len(set(groups)) < 2 or any(rows.loc[labels == label, "group_id"].nunique() < 2 for label in (0, 1)):
+        raise ValueError("Grouped threshold split requires at least two distinct groups per class.")
+
+    splitter = StratifiedGroupKFold(n_splits=2, shuffle=True, random_state=seed)
+    candidates = []
+    for tune_idx, test_idx in splitter.split(np.zeros(len(rows)), labels, groups):
+        tune_labels, test_labels = labels[tune_idx], labels[test_idx]
+        if set(np.unique(tune_labels)) != {0, 1} or set(np.unique(test_labels)) != {0, 1}:
+            continue
+        test_prevalence = float(test_labels.mean())
+        full_prevalence = float(labels.mean())
+        balance_error = abs(test_prevalence - full_prevalence)
+        size_error = abs(len(test_idx) / len(rows) - 0.5)
+        candidates.append((balance_error + size_error, tune_idx, test_idx))
+    if not candidates:
+        raise ValueError(
+            "Could not create a grouped split with both classes represented in tuning and test; "
+            "inspect duplicate groups and label distribution."
+        )
+    _, tune_idx, test_idx = min(candidates, key=lambda candidate: candidate[0])
+    tuning, test = rows.iloc[tune_idx].copy(), rows.iloc[test_idx].copy()
+    if set(tuning["group_id"]) & set(test["group_id"]):
+        raise RuntimeError("Duplicate group crossed the tuning/test split.")
+    return tuning, test
 
 
 def score_dataset(csv_path: Path, models_dir: Path, flip_labels: bool, predictor: Any | None = None):
-    """Return (y_true, fake_probability) for every scorable row (body only)."""
+    """Return aligned source-row, body, label, score and duplicate-group records."""
     if not csv_path.exists():
         raise FileNotFoundError(f"Dataset not found: {csv_path}")
     raw = _normalise_columns(pd.read_csv(csv_path))
@@ -58,24 +179,52 @@ def score_dataset(csv_path: Path, models_dir: Path, flip_labels: bool, predictor
         raise ValueError(f"Dataset must have a 'text' column. Found: {list(raw.columns)}")
     raw["_clean"] = raw["text"].apply(clean_single_text)
     keep = raw["_clean"].str.len().gt(0) & raw[label_col].notna()
-    df = raw.loc[keep].reset_index(drop=True)
+    df = raw.loc[keep].copy()
     if df.empty:
         raise ValueError("No usable rows after dropping empty bodies / missing labels.")
     y_true = _load_binary_labels(df[label_col], flip_labels)
+    clean_texts = df["_clean"].tolist()
+    source_rows = [int(row_index) for row_index in df.index]
+    group_ids = _duplicate_group_ids(clean_texts, y_true, source_rows)
     predictor = predictor or load_predictor(models_dir)
     results = predictor.predict_batch(df["text"].tolist())
-    idx, probs = [], []
+    if len(results) != len(df):
+        raise RuntimeError(
+            f"The model returned {len(results)} predictions for {len(df)} usable rows; "
+            "cannot preserve article/label/score alignment."
+        )
+    records = []
     for i, r in enumerate(results):
         p = r.get("fake_probability")
         if r.get("label_id") in (0, 1) and p is not None:
             if not np.isfinite(float(p)) or not 0.0 <= float(p) <= 1.0:
                 continue
-            idx.append(i)
-            probs.append(float(p))
-    if not idx:
+            records.append({
+                "source_row": int(df.index[i]),
+                "text": str(df.iloc[i]["text"]),
+                "label": int(y_true[i]),
+                "fake_probability": float(p),
+                "group_id": group_ids[i],
+            })
+    if not records:
         raise RuntimeError("The model returned no scorable predictions.")
-    return y_true[idx], np.asarray(probs), {"raw_rows": len(raw), "dropped_empty_rows": int((~keep).sum()),
-                                           "scorable_rows": len(idx)}
+    rows = pd.DataFrame.from_records(records)
+    grouped_usable = df.assign(
+        group_id=group_ids,
+        normalized_text=[" ".join(str(text).casefold().split()) for text in clean_texts],
+    ).groupby("group_id")
+    counts = {
+        "raw_rows": len(raw),
+        "dropped_empty_rows": int((~keep).sum()),
+        "scorable_rows": len(rows),
+        "unscorable_rows": int(len(df) - len(rows)),
+        "duplicate_groups": int(grouped_usable.ngroups),
+        "scorable_groups": int(rows["group_id"].nunique()),
+        "near_duplicate_groups": int(sum(
+            group["normalized_text"].nunique() > 1 for _, group in grouped_usable
+        )),
+    }
+    return rows, counts
 
 
 def metrics_at(y_true: np.ndarray, probs: np.ndarray, threshold: float) -> dict[str, Any]:
@@ -133,8 +282,10 @@ def _plot_sweep(rows, f1_thr, bal_thr, path: Path) -> None:
 
 def run(csv_path: Path, models_dir: Path, output_dir: Path, flip_labels: bool = False,
         seed: int = DEFAULT_SEED, predictor: Any | None = None) -> dict[str, Any]:
-    y, p, counts = score_dataset(csv_path, models_dir, flip_labels, predictor)
-    y_tune, y_test, p_tune, p_test = train_test_split(y, p, test_size=0.5, stratify=y, random_state=seed)
+    rows, counts = score_dataset(csv_path, models_dir, flip_labels, predictor)
+    tune_rows, test_rows = _split_grouped_rows(rows, seed)
+    y_tune, p_tune = tune_rows["label"].to_numpy(), tune_rows["fake_probability"].to_numpy()
+    y_test, p_test = test_rows["label"].to_numpy(), test_rows["fake_probability"].to_numpy()
 
     rows = sweep(y_tune, p_tune)                      # tuning half ONLY
     f1_thr = best_threshold(rows, "f1")
@@ -142,8 +293,17 @@ def run(csv_path: Path, models_dir: Path, output_dir: Path, flip_labels: bool = 
 
     result = {
         "evaluation": "threshold_tuning",
-        "split": {"method": "stratified 50/50", "seed": seed, "tune_rows": int(len(y_tune)),
-                  "test_rows": int(len(y_test)), "flip_labels_applied": bool(flip_labels), **counts},
+        "split": {
+            "method": "stratified grouped 50/50",
+            "seed": seed,
+            "grouping": "exact normalized body plus word-trigram SimHash, Hamming distance <= 6",
+            "tune_rows": int(len(y_tune)),
+            "test_rows": int(len(y_test)),
+            "tune_groups": int(tune_rows["group_id"].nunique()),
+            "test_groups": int(test_rows["group_id"].nunique()),
+            "flip_labels_applied": bool(flip_labels),
+            **counts,
+        },
         "chosen_on_tuning_half": {"best_f1_threshold": f1_thr, "best_balanced_accuracy_threshold": bal_thr},
         "test_half": {
             "default_0.5": metrics_at(y_test, p_test, 0.5),
@@ -151,7 +311,9 @@ def run(csv_path: Path, models_dir: Path, output_dir: Path, flip_labels: bool = 
             "tuned_best_balanced_accuracy": metrics_at(y_test, p_test, bal_thr),
         },
         "notes": [
-            "All metrics in 'test_half' were computed on rows never used to choose the threshold.",
+            "All metrics in 'test_half' were computed on duplicate groups never used to choose the threshold.",
+            "Near-duplicate grouping is a conservative SimHash heuristic; review its method and limitations before interpreting results.",
+            "Rows in an exact/near-duplicate group with conflicting labels stop evaluation and are reported for review, not discarded.",
             "Only the decision threshold changed; the model was not retrained.",
             "The tuning and test halves are both WELFake, so this does not show generalization to a third dataset.",
         ],
@@ -172,8 +334,9 @@ def _print_table(result: dict[str, Any]) -> None:
         m = result["test_half"][key]
         print(f"{name:<28} {m['threshold']:>5.2f} {m['accuracy']:>8.4f} {m['balanced_accuracy']:>8.4f} "
               f"{m['precision']:>8.4f} {m['recall']:>8.4f} {m['f1']:>8.4f} {m['predicted_fake_pct']:>11.2f}%")
-    print(f"\nThresholds were chosen on {result['split']['tune_rows']} tuning rows; "
-          f"reported on {result['split']['test_rows']} test rows (seed {result['split']['seed']}).")
+    print(f"\nThresholds were chosen on {result['split']['tune_rows']} tuning rows "
+          f"({result['split']['tune_groups']} groups); reported on {result['split']['test_rows']} "
+          f"held-out rows ({result['split']['test_groups']} groups, seed {result['split']['seed']}).")
     print("Saved: results/threshold_tuning.json and results/threshold_sweep.png")
 
 

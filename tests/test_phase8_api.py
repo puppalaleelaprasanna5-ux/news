@@ -22,7 +22,7 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.backend.main import create_app  # noqa: E402
-from src.credibility.service import MAX_INPUT_CHARS  # noqa: E402
+from src.credibility.service import MAX_CLAIMS, MAX_INPUT_CHARS  # noqa: E402
 from tests.test_phase8_service import ARTICLE, fake_predictor, make_service  # noqa: E402
 
 
@@ -94,6 +94,38 @@ def test_analyze_rejects_malformed_requests(tmp_path):
     assert client.post("/analyze", content="not json", headers={"content-type": "application/json"}).status_code == 422
     body = client.post("/analyze", json={}).json()
     assert body["error"] == "invalid_request" and body["problems"]
+
+
+def test_analyze_bounds_manual_claim_count_and_length(tmp_path):
+    client, _ = client_for(tmp_path)
+    accepted = client.post(
+        "/analyze",
+        json={
+            "text": ARTICLE,
+            "claims": ["claim " + str(i) for i in range(MAX_CLAIMS)],
+            "run_rag": False,
+        },
+    )
+    assert accepted.status_code == 200
+
+    too_many = client.post(
+        "/analyze",
+        json={
+            "text": ARTICLE,
+            "claims": ["claim " + str(i) for i in range(MAX_CLAIMS + 1)],
+        },
+    )
+    assert too_many.status_code == 422
+    assert too_many.json()["error"] == "invalid_request"
+
+    long_claim = "private-claim " + ("x" * MAX_INPUT_CHARS)
+    too_long = client.post(
+        "/analyze",
+        json={"text": ARTICLE, "claims": [long_claim]},
+    )
+    assert too_long.status_code == 422
+    assert too_long.json()["error"] == "invalid_request"
+    assert "private-claim" not in too_long.text
 
 
 def test_analyze_partial_result_when_the_ml_model_is_down(tmp_path):
