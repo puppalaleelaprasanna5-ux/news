@@ -38,7 +38,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts.cross_dataset_eval import (  # noqa: E402
     DEFAULT_DATASET, DEFAULT_MODELS, DEFAULT_OUTPUT,
-    _find_label_column, _load_binary_labels, _normalise_columns,
+    _calibration_diagnostics, _find_label_column, _load_binary_labels,
+    _normalise_columns, _per_class_metrics,
 )
 from src.models.predict import load_predictor  # noqa: E402
 from src.preprocessing.text_cleaning import clean_single_text  # noqa: E402
@@ -67,6 +68,8 @@ def score_dataset(csv_path: Path, models_dir: Path, flip_labels: bool, predictor
     for i, r in enumerate(results):
         p = r.get("fake_probability")
         if r.get("label_id") in (0, 1) and p is not None:
+            if not np.isfinite(float(p)) or not 0.0 <= float(p) <= 1.0:
+                continue
             idx.append(i)
             probs.append(float(p))
     if not idx:
@@ -89,6 +92,8 @@ def metrics_at(y_true: np.ndarray, probs: np.ndarray, threshold: float) -> dict[
         "roc_auc": auc,
         "predicted_fake_pct": float(np.mean(y_pred == 1) * 100.0),
         "confusion_matrix": {"labels": ["Real (0)", "Fake (1)"], "matrix": cm.astype(int).tolist()},
+        "per_class_metrics": _per_class_metrics(y_true, y_pred),
+        "probability_calibration": _calibration_diagnostics(y_true, probs),
     }
 
 

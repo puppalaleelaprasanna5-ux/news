@@ -21,6 +21,8 @@ overall_signal values:
     while the ML model is the only component feeding the signal.)
 """
 
+import math
+from numbers import Real
 from typing import Any, Dict, List, Optional
 
 SIGNAL_INSUFFICIENT = "insufficient_information"
@@ -56,7 +58,7 @@ def _usable(component: Optional[dict]) -> bool:
 
 
 def _ml_summary(ml_component: dict) -> Dict[str, Any]:
-    """Returns {'usable', 'label', 'confidence_level', 'warns', 'weak', 'n_words'} for the ML component."""
+    """Returns the usable prediction label, uncalibrated score band, and input length."""
     if not _usable(ml_component):
         return {"usable": False}
     res = ml_component["result"]
@@ -86,7 +88,7 @@ def build_final_assessment(components: Dict[str, dict], input_word_count: int) -
     # --- observations, one per component, stated as what that component said ---
     if ml["usable"]:
         observations.append(
-            f"ML model: predicted {ml['label']} ({ml['confidence_level']} confidence). "
+            f"ML model: predicted {ml['label']} (uncalibrated score band: {ml['confidence_level']}). "
             "This is a statistical pattern match against past articles, not proof about this text."
         )
     elif ml.get("undetermined"):
@@ -129,7 +131,7 @@ def build_final_assessment(components: Dict[str, dict], input_word_count: int) -
             notes.append(f"The input is also very short (under {MIN_WORDS_FOR_REASSURING_SIGNAL} words); the model was trained on full articles.")
 
     if ml["usable"] and ml["warns"] and ml.get("confidence_level") == "low":
-        notes.append("The ML 'Fake' prediction has low confidence.")
+        notes.append("The ML 'Fake' prediction has a low uncalibrated score band.")
 
     return {
         "overall_signal": signal,
@@ -140,4 +142,94 @@ def build_final_assessment(components: Dict[str, dict], input_word_count: int) -
         "suggested_next_steps": list(NEXT_STEPS),
         "is_verdict": False,
         "basis": "Rule-based summary of the ML prediction only. No percentage score. Retrieved evidence does not change the signal.",
+    }
+
+
+def interpret_retrieved_evidence(claim_result: Dict[str, Any]) -> Dict[str, str]:
+    """Describe retrieval status without inferring whether a passage supports a claim."""
+    passages = claim_result.get("retrieved_evidence") or []
+    if passages:
+        return {
+            "classification": "unclassified",
+            "reason": "Passages were retrieved by similarity, but the system does not determine whether they support or contradict the claim.",
+        }
+    status = claim_result.get("retrieval_status")
+    if status == "no_relevant_evidence":
+        reason = "No sufficiently relevant passage was found in the reference collection; this is not evidence for or against the claim."
+    elif status == "retrieval_unavailable":
+        reason = "Evidence retrieval was unavailable, so no passages could be assessed."
+    elif status == "invalid_claim":
+        reason = "The claim was empty or invalid, so no passages were searched."
+    else:
+        reason = "No passages were retrieved, so the claim cannot be assessed from this reference collection."
+    return {"classification": "inconclusive", "reason": reason}
+
+
+def _valid_probability(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) and 0.0 <= number <= 1.0 else None
+
+
+def build_structured_assessment(
+    components: Dict[str, dict],
+    final_assessment: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build additive, predictable API sections while keeping prediction and retrieval separate."""
+    ml = components.get("ml_prediction") or {}
+    ml_result = ml.get("result") or {}
+    label = ml_result.get("label")
+    fake_probability = _valid_probability(ml_result.get("fake_probability"))
+    real_probability = _valid_probability(ml_result.get("real_probability"))
+
+    evidence = components.get("evidence") or {}
+    claims = []
+    for result in evidence.get("claims") or []:
+        passages = []
+        for passage in result.get("retrieved_evidence") or []:
+            metadata = {key: value for key, value in passage.items() if key not in ("text", "source")}
+            passages.append({
+                "source_name": passage.get("source"),
+                "text": passage.get("text"),
+                "metadata": metadata,
+            })
+        claims.append({
+            "claim": result.get("claim"),
+            "retrieval_status": result.get("retrieval_status", "retrieval_unavailable"),
+            "passages": passages,
+            "evidence_interpretation": result.get("evidence_interpretation") or interpret_retrieved_evidence(result),
+        })
+
+    observations = final_assessment.get("observations") or []
+    return {
+        "machine_learning": {
+            "status": ml.get("status", "unavailable"),
+            "predicted_label": label if label in ("Fake", "Real") else None,
+            "fake_probability": fake_probability,
+            "real_probability": real_probability,
+            "probabilities_calibrated": False if fake_probability is not None or real_probability is not None else None,
+            "explanation": "The label is a model prediction based on learned text patterns, not verified truth.",
+        },
+        "article_claims": {
+            "status": evidence.get("status", "unavailable"),
+            "claim_source": evidence.get("claim_source", "none"),
+            "items": claims,
+            "empty_state": (
+                evidence.get("detail")
+                or evidence.get("error")
+                or ("No claims were selected." if not claims else None)
+            ) if not claims else None,
+        },
+        "overall": {
+            "summary": final_assessment.get("headline"),
+            "model_observation": observations[0] if observations else "The model prediction is unavailable.",
+            "evidence_observation": observations[1] if len(observations) > 1 else "Evidence retrieval was not run.",
+            "limitations": list(final_assessment.get("cannot_conclude") or []),
+            "limitation_statement": (
+                "The classifier learns text patterns and does not verify truth; retrieval similarity does not establish "
+                "whether a passage supports or contradicts a claim."
+            ),
+            "is_verdict": False,
+        },
     }

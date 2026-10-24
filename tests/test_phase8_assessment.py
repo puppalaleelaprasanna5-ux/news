@@ -12,7 +12,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.credibility.assessment import (
-    SIGNAL_FEW_WARNINGS, SIGNAL_INSUFFICIENT, SIGNAL_MIXED, SIGNAL_WARNING, build_final_assessment,
+    SIGNAL_FEW_WARNINGS, SIGNAL_INSUFFICIENT, SIGNAL_MIXED, SIGNAL_WARNING,
+    build_final_assessment, build_structured_assessment,
 )
 
 
@@ -53,7 +54,7 @@ def test_short_real_headline_adds_a_short_input_note():
 
 def test_low_confidence_fake_is_flagged_in_notes():
     out = assess(ml("Fake", "low"))
-    assert out["overall_signal"] == SIGNAL_WARNING and any("low confidence" in n for n in out["notes"])
+    assert out["overall_signal"] == SIGNAL_WARNING and any("low uncalibrated score band" in n for n in out["notes"])
 
 
 def test_nothing_usable_is_insufficient_and_says_so():
@@ -91,3 +92,54 @@ def test_assessment_has_no_numeric_score_and_is_not_a_verdict():
     assert not any(isinstance(v, (int, float)) and not isinstance(v, bool) for v in out.values())
     assert "No percentage score" in out["basis"]
     assert len(out["suggested_next_steps"]) >= 2
+
+
+def test_structured_assessment_keeps_prediction_claims_and_observations_distinct():
+    components = {
+        "ml_prediction": {"status": "ok", "result": {
+            "label": "Fake", "fake_probability": 0.82, "real_probability": 0.18,
+        }},
+        "evidence": {"status": "ok", "claim_source": "manual", "claims": [{
+            "claim": "The library opened in 1990.",
+            "retrieval_status": "evidence_retrieved",
+            "retrieved_evidence": [{
+                "text": "The library opened in 1991.", "source": "annual_report.txt",
+                "page": 4, "source_id": "annual_report.txt", "chunk_id": 2, "score": 0.77,
+            }],
+        }]},
+    }
+    final = build_final_assessment(components, 12)
+
+    assessment = build_structured_assessment(components, final)
+
+    assert assessment["machine_learning"]["predicted_label"] == "Fake"
+    assert assessment["machine_learning"]["fake_probability"] == 0.82
+    assert assessment["machine_learning"]["probabilities_calibrated"] is False
+    claim = assessment["article_claims"]["items"][0]
+    assert claim["claim"] == "The library opened in 1990."
+    assert claim["evidence_interpretation"]["classification"] == "unclassified"
+    assert claim["passages"][0]["source_name"] == "annual_report.txt"
+    assert claim["passages"][0]["text"] == "The library opened in 1991."
+    assert claim["passages"][0]["metadata"]["page"] == 4
+    assert assessment["overall"]["is_verdict"] is False
+    assert "uncalibrated score band" in assessment["overall"]["model_observation"]
+    assert "score" not in assessment["overall"]
+
+
+def test_structured_assessment_has_predictable_empty_states_and_validates_probabilities():
+    components = {
+        "ml_prediction": {"status": "ok", "result": {
+            "label": "Undetermined", "fake_probability": float("nan"), "real_probability": 1.2,
+        }},
+        "evidence": {"status": "unavailable", "claim_source": "none", "claims": [],
+                     "error": "Evidence index unavailable."},
+    }
+    assessment = build_structured_assessment(components, build_final_assessment(components, 3))
+
+    assert assessment["machine_learning"]["predicted_label"] is None
+    assert assessment["machine_learning"]["fake_probability"] is None
+    assert assessment["machine_learning"]["real_probability"] is None
+    assert assessment["machine_learning"]["probabilities_calibrated"] is None
+    assert assessment["article_claims"]["items"] == []
+    assert assessment["article_claims"]["empty_state"] == "Evidence index unavailable."
+    assert assessment["overall"]["is_verdict"] is False

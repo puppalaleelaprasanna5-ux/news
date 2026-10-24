@@ -53,6 +53,9 @@ def test_threshold_tuning_writes_outputs_and_reports_test_half_only(tmp_path):
     # every test-half confusion matrix must sum to the test size
     for m in res["test_half"].values():
         assert sum(map(sum, m["confusion_matrix"]["matrix"])) == res["split"]["test_rows"]
+        assert set(m["per_class_metrics"]) == {"Real", "Fake"}
+        assert "brier_score" in m["probability_calibration"]
+        assert m["probability_calibration"]["calibration_status"] == "diagnostic_only_not_calibrated"
 
 
 def test_tuning_and_test_halves_do_not_overlap_and_are_reproducible():

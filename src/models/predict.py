@@ -252,9 +252,9 @@ def format_prediction(result: dict) -> str:
         lines.append("Prediction : Undetermined (not enough known vocabulary)")
     else:
         lines.append(f"Prediction : {result['label']}  "
-                     f"(confidence {_percent(result['confidence'])} - {result['confidence_level']})")
-        lines.append(f"P(Fake)    : {_percent(result['fake_probability'])}    "
-                     f"P(Real): {_percent(result['real_probability'])}")
+                     f"(uncalibrated score band: {result['confidence_level']})")
+        lines.append(f"Fake score : {_percent(result['fake_probability'])}    "
+                     f"Real score: {_percent(result['real_probability'])} (not calibrated)")
     lines.append(f"Text size  : {result['n_words']} words, {result['n_known_terms']} known model terms")
     for w in result["warnings"]:
         lines.append(f"Warning    : {w}")

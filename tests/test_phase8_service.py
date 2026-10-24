@@ -163,7 +163,26 @@ def test_missing_rag_index_gives_unavailable_evidence_with_other_components_ok(t
     assert ev["status"] == "unavailable" and "scripts/rag_cli.py build" in ev["error"]
     assert str(tmp_path) not in str(ev)  # no filesystem paths leak
     assert out["components"]["ml_prediction"]["status"] == "ok"
+    claim_items = out["credibility_assessment"]["article_claims"]["items"]
+    assert claim_items and all(item["retrieval_status"] == "retrieval_unavailable" for item in claim_items)
+    assert all(item["evidence_interpretation"]["classification"] == "inconclusive" for item in claim_items)
     assert out["partial"] is True
+
+
+def test_retrieval_exception_preserves_selected_claims_as_inconclusive(tmp_path):
+    svc = make_service(tmp_path, fake_predictor())
+    broken_retriever = MagicMock()
+    broken_retriever.retrieve_many.side_effect = RuntimeError("private retrieval detail")
+    svc._get_retriever = lambda: (broken_retriever, None)
+
+    out = svc.analyze(ARTICLE)
+
+    evidence = out["components"]["evidence"]
+    assert evidence["status"] == "error"
+    assert "private retrieval detail" not in str(out)
+    claims = out["credibility_assessment"]["article_claims"]["items"]
+    assert claims and all(item["evidence_interpretation"]["classification"] == "inconclusive" for item in claims)
+    assert out["components"]["ml_prediction"]["status"] == "ok"
 
 
 def _without_faiss():

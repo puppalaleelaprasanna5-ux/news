@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from src.credibility.assessment import build_final_assessment
+from src.credibility.assessment import build_final_assessment, build_structured_assessment, interpret_retrieved_evidence
 from src.models.predict import DEFAULT_MODELS_DIR, FakeNewsPredictor
 from src.rag.config import DEFAULT_INDEX_DIR, DEFAULT_MIN_SCORE, PROJECT_ROOT, SAMPLE_DOCS_DIR
 from src.rag.claim_selector import select_claims
@@ -80,6 +80,20 @@ def _component(status: str, **fields) -> Dict[str, Any]:
     base = {"status": status, "error": None, "notice": None, "result": None}
     base.update(fields)
     return base
+
+
+def _unavailable_claim_results(claims: List[str]) -> List[dict]:
+    return [
+        {
+            "claim": claim,
+            "retrieval_status": "retrieval_unavailable",
+            "retrieved_evidence": [],
+            "evidence_interpretation": interpret_retrieved_evidence(
+                {"retrieval_status": "retrieval_unavailable", "retrieved_evidence": []}
+            ),
+        }
+        for claim in claims
+    ]
 
 
 def _sha256(path: Path) -> str:
@@ -270,12 +284,14 @@ class AnalysisService:
 
         retriever, error = self._get_retriever()
         if retriever is None:
+            base["claims"] = _unavailable_claim_results(claims)
             return _component("unavailable", error=error, detail="Evidence index unavailable.", **base)
 
         try:
             results = retriever.retrieve_many(claims, top_k=options.top_k)
         except Exception:
             logger.exception("Retrieval failed")
+            base["claims"] = _unavailable_claim_results(claims)
             return _component("error", error="Evidence retrieval failed unexpectedly.", detail="Retrieval failed.", **base)
 
         any_failed = False
@@ -283,6 +299,7 @@ class AnalysisService:
             if r.get("error"):
                 logger.warning("Retrieval problem for a claim: %s", r["error"])
                 r["error"] = self._retrieval_error_message(r["error"])
+            r["evidence_interpretation"] = interpret_retrieved_evidence(r)
             if r["retrieval_status"] in ("retrieval_unavailable",):
                 any_failed = True
             for item in r["retrieved_evidence"]:
@@ -336,6 +353,7 @@ class AnalysisService:
         if ml["status"] == "ok":
             warnings.extend(ml["result"].get("warnings", []) or [])
 
+        final_assessment = build_final_assessment(components, words)
         return {
             "input": {
                 "char_count": len(clean),
@@ -346,7 +364,8 @@ class AnalysisService:
             "component_status": statuses,
             "partial": partial,
             "warnings": warnings,
-            "final_assessment": build_final_assessment(components, words),
+            "final_assessment": final_assessment,
+            "credibility_assessment": build_structured_assessment(components, final_assessment),
             "limitations": PIPELINE_LIMITATIONS + [
                 "The ML model was trained on a news dataset with known formatting artifacts; high accuracy there does not "
                 "mean it generalises to all news."

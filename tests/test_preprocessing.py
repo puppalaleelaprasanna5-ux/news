@@ -48,6 +48,7 @@ from src.preprocessing.split_data import (
     split_dataset,
     assert_no_overlap,
     assert_no_text_overlap_across_splits,
+    find_near_duplicate_pairs,
 )
 
 
@@ -236,6 +237,30 @@ def test_split_dataset_has_no_text_overlap():
 
     # Should not raise.
     assert_no_text_overlap_across_splits(train_df, val_df, test_df, text_col="text")
+
+
+def test_near_duplicate_audit_flags_cross_split_similar_articles():
+    article = (
+        "The national health agency announced a new vaccine program for the northern district "
+        "on Tuesday after officials reviewed the latest regional infection reports and met with "
+        "local hospital administrators about the upcoming public health campaign."
+    )
+    train = pd.DataFrame({"clean_text": [article]})
+    validation = pd.DataFrame({"clean_text": [article.replace("northern district", "northern region")]})
+    test = pd.DataFrame({"clean_text": ["A separate report covers a local sports tournament."]})
+
+    pairs = find_near_duplicate_pairs(train, validation, test)
+
+    assert len(pairs) == 1
+    assert pairs[0]["left_split"] == "train"
+    assert pairs[0]["right_split"] == "validation"
+    assert pairs[0]["hamming_distance"] <= 6
+
+
+def test_near_duplicate_audit_rejects_invalid_distance():
+    empty = pd.DataFrame({"clean_text": []})
+    with pytest.raises(ValueError, match="max_hamming_distance"):
+        find_near_duplicate_pairs(empty, empty, empty, max_hamming_distance=64)
 
 
 # --- Cross-class conflict handling tests (new) -------------------------------

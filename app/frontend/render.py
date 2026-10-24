@@ -112,10 +112,10 @@ def ml_card_html(comp: Dict[str, Any]) -> str:
 
     body = (
         f'<div class="nc-label" style="margin-top:0">Predicted label</div>'
-        f'<div class="nc-verdict">{esc(label)} {pill("Confidence: " + conf, "neutral")}</div>'
+        f'<div class="nc-verdict">{esc(label)} {pill("Uncalibrated score band: " + conf, "neutral")}</div>'
         f'<div class="nc-label">Model scores</div>'
         f'{bar("Score for Fake", fake_p, "")}{bar("Score for Real", real_p, "real")}'
-        f'<p class="nc-caption">Scores come from a TF-IDF + Logistic Regression model trained on the ISOT news dataset. '
+        f'<p class="nc-caption">Uncalibrated scores from a TF-IDF + Logistic Regression model trained on the ISOT news dataset. '
         f'They describe how closely the wording matches its training examples, not the chance that the story is true.</p>'
     )
     body += "".join(note(w, "warn") for w in res.get("warnings") or [])
@@ -135,6 +135,13 @@ def ml_card_html(comp: Dict[str, Any]) -> str:
 
 def _evidence_for_claim(result: Dict[str, Any]) -> str:
     head = f'<div class="nc-claim">Claim: {esc(result.get("claim"))}</div>'
+    interpretation = result.get("evidence_interpretation") or {}
+    if interpretation:
+        label = interpretation.get("classification", "unclassified")
+        head += note(
+            f"Evidence interpretation: {label}. {interpretation.get('reason') or ''}",
+            "accent",
+        )
     status = result.get("retrieval_status")
     if status == "evidence_retrieved" and result.get("retrieved_evidence"):
         passages = []

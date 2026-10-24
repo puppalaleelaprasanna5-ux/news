@@ -20,6 +20,10 @@ DATA LEAKAGE PREVENTION - read this before using in later phases:
        Use the validation set for model selection and hyperparameter tuning.
 """
 
+import hashlib
+import re
+
+import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
@@ -27,6 +31,10 @@ RANDOM_SEED = 42
 TRAIN_SIZE = 0.70
 VALIDATION_SIZE = 0.15
 TEST_SIZE = 0.15
+SIMHASH_BITS = 64
+SIMHASH_BAND_BITS = 4
+NEAR_DUPLICATE_MAX_HAMMING_DISTANCE = 6
+_TOKEN_RE = re.compile(r"\w+", flags=re.UNICODE)
 
 
 def split_dataset(df: pd.DataFrame, label_col: str = "label",
@@ -136,3 +144,85 @@ def count_text_overlap_across_splits(train_df: pd.DataFrame, val_df: pd.DataFram
 
     overlap = (train_texts & val_texts) | (train_texts & test_texts) | (val_texts & test_texts)
     return len(overlap)
+
+
+def _simhash(text: str) -> int:
+    """Fingerprint token trigrams for conservative near-duplicate candidate search."""
+    tokens = _TOKEN_RE.findall(str(text).casefold())
+    if not tokens:
+        return 0
+    shingles = (
+        (" ".join(tokens[i:i + 3]) for i in range(len(tokens) - 2))
+        if len(tokens) >= 3
+        else iter(tokens)
+    )
+    hashes = np.fromiter(
+        (
+            int.from_bytes(hashlib.blake2b(shingle.encode("utf-8"), digest_size=8).digest(), "little")
+            for shingle in set(shingles)
+        ),
+        dtype=np.uint64,
+    )
+    bits = np.unpackbits(hashes.view(np.uint8), bitorder="little").reshape(-1, SIMHASH_BITS)
+    set_bit_counts = bits.sum(axis=0)
+    return sum(
+        1 << bit
+        for bit, set_count in enumerate(set_bit_counts)
+        if 2 * set_count >= len(hashes)
+    )
+
+
+def find_near_duplicate_pairs(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    text_col: str = "clean_text",
+    max_hamming_distance: int = NEAR_DUPLICATE_MAX_HAMMING_DISTANCE,
+) -> list[dict]:
+    """
+    Return likely near-duplicate pairs that cross split boundaries.
+
+    SimHash over word trigrams plus locality-sensitive banding keeps the audit
+    practical for the full dataset. Matches are candidates for review, not proof
+    of duplication, and this diagnostic never removes data or changes a split.
+    """
+    if not 0 <= max_hamming_distance < SIMHASH_BITS:
+        raise ValueError(f"max_hamming_distance must be between 0 and {SIMHASH_BITS - 1}.")
+
+    records = []
+    for split_name, frame in (("train", train_df), ("validation", val_df), ("test", test_df)):
+        if text_col not in frame.columns:
+            raise KeyError(f"Column {text_col!r} is missing from the {split_name} split.")
+        for row_index, text in enumerate(frame[text_col].fillna("").astype(str)):
+            normalized = " ".join(text.casefold().split())
+            if normalized:
+                records.append((split_name, row_index, normalized, _simhash(normalized)))
+
+    band_count = SIMHASH_BITS // SIMHASH_BAND_BITS
+    band_mask = (1 << SIMHASH_BAND_BITS) - 1
+    buckets: dict[tuple[int, int], list[int]] = {}
+    pairs = []
+    for record_index, (split_name, row_index, normalized, fingerprint) in enumerate(records):
+        candidates = set()
+        for band in range(band_count):
+            value = (fingerprint >> (band * SIMHASH_BAND_BITS)) & band_mask
+            candidates.update(buckets.get((band, value), ()))
+
+        for candidate_index in candidates:
+            other_split, other_row, other_text, other_fingerprint = records[candidate_index]
+            if other_split == split_name or other_text == normalized:
+                continue
+            distance = (fingerprint ^ other_fingerprint).bit_count()
+            if distance <= max_hamming_distance:
+                pairs.append({
+                    "left_split": other_split,
+                    "left_row": other_row,
+                    "right_split": split_name,
+                    "right_row": row_index,
+                    "hamming_distance": distance,
+                })
+
+        for band in range(band_count):
+            value = (fingerprint >> (band * SIMHASH_BAND_BITS)) & band_mask
+            buckets.setdefault((band, value), []).append(record_index)
+    return pairs

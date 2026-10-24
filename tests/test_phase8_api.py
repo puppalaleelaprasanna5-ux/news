@@ -63,6 +63,11 @@ def test_analyze_valid_input_returns_structured_json(tmp_path):
     assert body["components"]["ml_prediction"]["status"] == "ok"
     assert "llama" not in resp.text.lower() and "ollama" not in resp.text.lower()
     assert body["final_assessment"]["is_verdict"] is False
+    structured = body["credibility_assessment"]
+    assert set(structured) == {"machine_learning", "article_claims", "overall"}
+    assert structured["machine_learning"]["probabilities_calibrated"] is False
+    assert structured["article_claims"]["status"] == body["components"]["evidence"]["status"]
+    assert structured["overall"]["is_verdict"] is False
     assert "disclaimer" in body and body["input"]["word_count"] > 10
 
 

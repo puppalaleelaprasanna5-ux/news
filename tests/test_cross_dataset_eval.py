@@ -63,6 +63,10 @@ def test_cross_dataset_script_tiny_csv_writes_expected_json_keys(tmp_path):
     }
     assert required_top_level.issubset(saved.keys())
     assert {"accuracy", "precision", "recall", "f1", "roc_auc"}.issubset(saved["metrics"].keys())
+    assert set(saved["per_class_metrics"]) == {"Real", "Fake"}
+    assert saved["per_class_metrics"]["Real"]["support"] == 5
+    assert saved["probability_calibration"]["calibration_status"] == "diagnostic_only_not_calibrated"
+    assert 0 <= saved["probability_calibration"]["expected_calibration_error_10_bins"] <= 1
     assert saved["dataset"]["raw_rows"] == 10
     assert saved["dataset"]["dropped_empty_rows"] == 0
     assert saved["dataset"]["scorable_rows"] == 10

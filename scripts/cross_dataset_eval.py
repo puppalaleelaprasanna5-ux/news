@@ -27,6 +27,8 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import (
     accuracy_score,
+    brier_score_loss,
+    classification_report,
     confusion_matrix,
     f1_score,
     precision_score,
@@ -123,6 +125,41 @@ def _metric_or_none(value: Any) -> float | None:
     return number if np.isfinite(number) else None
 
 
+def _per_class_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, dict[str, float | int]]:
+    report = classification_report(
+        y_true, y_pred, labels=[0, 1], target_names=["Real", "Fake"],
+        output_dict=True, zero_division=0,
+    )
+    return {
+        name: {
+            "precision": float(report[name]["precision"]),
+            "recall": float(report[name]["recall"]),
+            "f1": float(report[name]["f1-score"]),
+            "support": int(report[name]["support"]),
+        }
+        for name in ("Real", "Fake")
+    }
+
+
+def _calibration_diagnostics(y_true: np.ndarray, probabilities: np.ndarray, bins: int = 10) -> dict[str, Any]:
+    """Report probability-quality diagnostics without claiming or fitting calibration."""
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    error = 0.0
+    for index in range(bins):
+        lower, upper = edges[index], edges[index + 1]
+        in_bin = (probabilities >= lower) & (
+            probabilities <= upper if index == bins - 1 else probabilities < upper
+        )
+        if in_bin.any():
+            error += float(in_bin.mean()) * abs(float(probabilities[in_bin].mean()) - float(y_true[in_bin].mean()))
+    return {
+        "brier_score": _metric_or_none(brier_score_loss(y_true, probabilities)),
+        "expected_calibration_error_10_bins": float(error),
+        "calibration_status": "diagnostic_only_not_calibrated",
+        "note": "These are reliability diagnostics on this evaluation set; no calibration model was fitted or validated.",
+    }
+
+
 def evaluate_dataset(
     csv_path: Path,
     models_dir: Path,
@@ -171,6 +208,8 @@ def evaluate_dataset(
         label_id = result.get("label_id")
         fake_probability = result.get("fake_probability")
         if label_id not in (0, 1) or fake_probability is None:
+            continue
+        if not np.isfinite(float(fake_probability)) or not 0.0 <= float(fake_probability) <= 1.0:
             continue
         scorable_indices.append(i)
         y_pred_all.append(int(label_id))
@@ -225,6 +264,8 @@ def evaluate_dataset(
             "raw_label_mapping": ({"0": "Fake", "1": "Real"} if flip_labels else {"0": "Real", "1": "Fake"}),
         },
         "metrics": metrics,
+        "per_class_metrics": _per_class_metrics(y_eval, y_pred),
+        "probability_calibration": _calibration_diagnostics(y_eval, fake_scores),
         "fake_predictions_pct": fake_prediction_pct,
         "true_class_counts": {
             "real_0": int(np.sum(y_eval == 0)),

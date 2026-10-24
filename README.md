@@ -319,6 +319,10 @@ cost of occasionally missing a true near-duplicate that differs only by trivial 
   something to keep in mind in Phase 4, since a TF-IDF vectorizer would see these 6 rows as
   producing identical feature vectors) rather than silently forced into either "duplicate" or
   "not duplicate" without your input.
+- The preprocessing pipeline also reports conservative cross-split near-duplicate candidates
+  using word-trigram SimHash (Hamming distance <= 6). This is an audit heuristic: candidates
+  are not automatically dropped, and zero candidates is not proof that no similar articles
+  exist. Review candidates and record the source dataset/version when running on the real data.
 - No parameters are "learned" from the data in Phase 2 (no vectorizer, no scaler yet), so
   there's nothing to accidentally fit on the wrong split at this stage. This matters starting
   Phase 4: any future TF-IDF vectorizer (or similar) must be fit **only** on `train.csv`,
@@ -611,8 +615,9 @@ strongest terms toward Real: `reuters`, `washington reuters`, `on tuesday`.
 ### Limitations seen during Phase 5 testing
 
 On hand-written test articles, typical-style examples matched the intended label (4 of 4), but two adversarial
-examples did not: an invented false claim written in Reuters style was classed **Real with 99.8% confidence**, and
-a factual weather report carrying an image credit was classed Fake. This agrees with the Phase 4 finding that the
+examples did not: an invented false claim written in Reuters style was classed **Real despite a raw model output of
+99.8% toward Real**, and a factual weather report carrying an image credit was classed Fake. That 99.8% was not
+calibrated and was not a probability that the claim was true. This agrees with the Phase 4 finding that the
 model partly reads source formatting rather than truthfulness. Two cases are illustrative, not a statistical test.
 Probabilities are not calibration-tested, and very short inputs can still produce confident output (a warning is
 attached).
@@ -658,6 +663,22 @@ Mentions of Llama in the older "verification status" notes below describe the pr
 The ISOT-trained TF-IDF + Logistic Regression model was evaluated, **without retraining**, on 71,321 scorable articles from
 WELFake (body text only, matching the training input; 783 empty rows dropped, 30 unscorable). Reproduce with
 `python scripts/cross_dataset_eval.py` (check labels first with `--preview-only`). The dashboard's **Evaluation** tab shows the saved results.
+The complete provenance, per-class metrics, leakage/calibration status, limitations, and recommendations are in
+[docs/evaluation_report.md](docs/evaluation_report.md). The checked-in JSON represents a prior run; this checkout does
+not include the raw WELFake CSV or processed ISOT splits, so these results cannot currently be regenerated here.
+
+From the repository root, after obtaining WELFake and placing it at `data/raw/WELFake_Dataset.csv` (or supplying
+`--input-csv PATH`), run the reproducible evaluation commands:
+
+```powershell
+python scripts/cross_dataset_eval.py --preview-only
+python scripts/cross_dataset_eval.py
+python scripts/threshold_tuning.py
+```
+
+The scripts keep the saved classifier unchanged, report confusion and per-class metrics, and add Brier/ECE
+probability diagnostics. Those diagnostics do not calibrate the model. To audit ISOT duplicates and splits, place
+`Fake.csv` and `True.csv` under `data/raw/`, then run `python -m src.preprocessing.pipeline`.
 
 | Dataset | Accuracy | Precision | Recall | F1 | ROC-AUC | Predicted Fake |
 |---|---|---|---|---|---|---|
@@ -914,7 +935,7 @@ One request runs two independent components and returns their outputs **separate
 
 | Component | Source | Output |
 |---|---|---|
-| ML prediction | saved TF-IDF + Logistic Regression (`models/`, Phases 4-5) | label (Fake/Real), model score for "Fake", confidence level, influential words |
+| ML prediction | saved TF-IDF + Logistic Regression (`models/`, Phases 4-5) | label (Fake/Real), uncalibrated Fake/Real scores and score band, influential words |
 | Evidence retrieval | FAISS index + `all-MiniLM-L6-v2` (Phase 7) | for each claim, the most similar reference passages with source, passage id, cosine similarity |
 | Final cautious assessment | rule-based, in `src/credibility/assessment.py` | one of four qualitative signals + observations + what cannot be concluded |
 
@@ -990,7 +1011,7 @@ The Streamlit page is branded **NewsCred** and has three sections: **Analyze New
 
 **Analyze News** workflow: paste a headline or article (or pick one of the three built-in examples), then press **Analyze News**. Optional settings are collapsed under **Advanced options**: retrieve evidence passages, passages per claim (1-5) and optional claims to search for. The **Evaluation** tab shows the saved cross-dataset and threshold-tuning results from `results/`. The defaults work without configuring anything.
 
-Results appear as three separate cards, each filled only from what `POST /analyze` returned: **A** machine learning prediction (label, model scores for Fake and Real as returned by the API, confidence level), **B** retrieved evidence (passage, source file, page if known, passage id, cosine similarity), **C** overall assessment (the cautious, non-verdict summary from the API). A score or label is never derived or invented by the page; a missing value is shown as `n/a`.
+Results appear as three separate cards, each filled only from what `POST /analyze` returned: **A** machine learning prediction (label, uncalibrated scores and score band), **B** selected claims and retrieved passages with source/page/similarity metadata plus an explicit noncommittal evidence interpretation, and **C** overall assessment (the cautious, non-verdict summary from the API). The API's additive `credibility_assessment` object keeps machine prediction, claims/evidence, interpretations, and the overall summary in separate predictable fields. A score or label is never derived or invented by the page; a missing value is shown as `n/a`.
 
 **API address:** the page reads `BACKEND_URL` (default `http://127.0.0.1:8000`, or built from `BACKEND_HOST`/`BACKEND_PORT`), from the environment or `.env`. It calls only `GET /health` (service status line, on page load and on Retry) and `POST /analyze`. If the API cannot be reached the page shows a plain-language message, a **Retry connection** button and a **Troubleshooting details** section with the address it tried, the start command and the technical error. It never shows demo results in place of a failed call.
 
@@ -1029,11 +1050,27 @@ Request fields: `text` (required, max 20,000 characters), `claims` (optional lis
   "component_status": {"ml_prediction": "ok", "evidence": "ok"},
   "partial": false, "warnings": [],
   "final_assessment": {"overall_signal": "...", "headline": "...", "observations": [], "cannot_conclude": [], "suggested_next_steps": [], "is_verdict": false},
+  "credibility_assessment": {
+    "machine_learning": {"status": "ok", "predicted_label": "...", "fake_probability": 0.0,
+                         "real_probability": 0.0, "probabilities_calibrated": false, "explanation": "..."},
+    "article_claims": {"status": "ok", "claim_source": "heuristic",
+                       "items": [{"claim": "...", "retrieval_status": "...", "passages": [
+                         {"source_name": "file.txt", "text": "...", "metadata": {"page": null}}
+                       ], "evidence_interpretation": {"classification": "unclassified", "reason": "..."}}],
+                       "empty_state": null},
+    "overall": {"summary": "...", "model_observation": "...", "evidence_observation": "...",
+                "limitations": [], "limitation_statement": "...", "is_verdict": false}
+  },
   "limitations": [], "disclaimer": "..."
 }
 ```
 
 (Values above are placeholders showing the shape only; real values are computed per request.) Errors: empty/too-long input -> HTTP 422 `{"error": "invalid_input", "message": "..."}`; malformed request -> 422 `{"error": "invalid_request", "problems": [...]}`; unexpected server failure -> 500 `{"error": "internal_error", ...}` with no details.
+
+`credibility_assessment` is additive; the existing `components` and `final_assessment` fields remain for compatibility.
+Retrieved passages have source names and only metadata available in the index. Evidence is `unclassified` when passages
+exist because similarity alone does not determine support or contradiction; missing/empty/unavailable results are
+`inconclusive`. Model probabilities are explicitly uncalibrated.
 
 **Which claims are searched:** claims supplied in the request; otherwise, for a short headline (<= 40 words), the headline itself (labelled `input_text`); otherwise up to 5 sentences chosen by a simple rule-based selector (labelled `heuristic`); if no sentence qualifies, retrieval is skipped. Claims are never invented.
 
@@ -1137,4 +1174,3 @@ The sandbox where Phase 8 was written had **no internet access**: `fastapi`, `uv
 
 - This system is a **fake-news detection and credibility analysis tool**, not an absolute truth detector. It never claims "100% fake" or "100% true" without authoritative evidence.
 - ML predictions and retrieved evidence are always presented as clearly separate, labeled sections.
-

@@ -33,6 +33,7 @@ from src.preprocessing.split_data import (
     assert_no_overlap,
     assert_no_text_overlap_across_splits,
     count_text_overlap_across_splits,
+    find_near_duplicate_pairs,
 )
 
 # Project root = two levels up from this file (src/preprocessing/pipeline.py)
@@ -97,6 +98,7 @@ def run_preprocessing_pipeline(raw_data_dir: Path = RAW_DATA_DIR,
     clean_text_overlap_count = count_text_overlap_across_splits(
         train_df, val_df, test_df, text_col="clean_text"
     )
+    near_duplicate_pairs = find_near_duplicate_pairs(train_df, val_df, test_df, text_col="clean_text")
     if clean_text_overlap_count == 0:
         print("  'clean_text' overlap check passed (0 overlapping values).")
     else:
@@ -107,6 +109,9 @@ def run_preprocessing_pipeline(raw_data_dir: Path = RAW_DATA_DIR,
             f"that light cleaning removes, not by article_id or raw-text leakage (both "
             f"already verified above). See README -> Phase 2 for details."
         )
+    print(f"  Near-duplicate candidates across splits: {len(near_duplicate_pairs)}")
+    if near_duplicate_pairs:
+        print("  Review these candidates before relying on the split metrics; they are not removed automatically.")
 
     print(f"\n  Train size      : {len(train_df)}")
     print(f"  Validation size : {len(val_df)}")
@@ -131,6 +136,7 @@ def run_preprocessing_pipeline(raw_data_dir: Path = RAW_DATA_DIR,
         "clean_stats": clean_stats,
         "raw_combined_count": raw_combined_count,
         "clean_text_overlap_count": clean_text_overlap_count,
+        "near_duplicate_pairs": near_duplicate_pairs,
     }
 
 

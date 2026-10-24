@@ -45,6 +45,7 @@ def test_esc_neutralises_html_and_none():
 def test_ml_card_shows_only_returned_scores_and_the_disclaimer():
     out = render.ml_card_html(ML_OK)
     assert "Real" in out and "12.3%" in out and "87.7%" in out and "High" in out
+    assert "Uncalibrated score band" in out
     assert "not proof" in out and "Very short input" in out and "reuters" in out
     assert has_no_raw_newlines(out)
 
@@ -94,6 +95,19 @@ def test_evidence_card_omits_page_when_unknown():
 def test_evidence_card_no_relevant_evidence_message_is_readable_and_not_a_verdict():
     out = render.evidence_card_html(evidence_comp("no_relevant_evidence", claim_extra={"retrieved_evidence": []}))
     assert "No sufficiently relevant passage" in out and "does not mean the claim is true or false" in out
+
+
+def test_evidence_card_shows_noncommittal_interpretation():
+    comp = evidence_comp("evidence_retrieved", claim_extra={
+        "evidence_interpretation": {
+            "classification": "unclassified",
+            "reason": "Similarity does not determine agreement.",
+        },
+        "retrieved_evidence": [],
+    })
+    out = render.evidence_card_html(comp)
+    assert "Evidence interpretation: unclassified" in out
+    assert "Similarity does not determine agreement." in out
 
 
 def test_evidence_card_unavailable_and_skipped():
