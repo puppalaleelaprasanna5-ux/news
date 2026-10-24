@@ -1,0 +1,35 @@
+{
+  "model_name": "Logistic Regression",
+  "model_class": "LogisticRegression",
+  "feature_type": "TF-IDF",
+  "ngram_range": [
+    1,
+    2
+  ],
+  "max_features": 30000,
+  "min_df": 3,
+  "max_df": 0.9,
+  "vocabulary_size": 30000,
+  "training_dataset": "ISOT Fake and Real News Dataset",
+  "training_set_size": 27050,
+  "selected_using": "validation_set",
+  "random_state": 42,
+  "label_convention": {
+    "1": "Fake",
+    "0": "Real"
+  },
+  "excluded_features": [
+    "subject",
+    "date",
+    "article_id"
+  ],
+  "excluded_features_reason": "Phase 3 EDA found 'subject' is a near-perfect class separator and 'date' shows partially non-overlapping ranges by class - both are dataset-collection artifacts, not genuine content signals. 'article_id' is a bookkeeping identifier only.",
+  "validation_metrics": {
+    "accuracy": 0.9876,
+    "precision": 0.9915,
+    "recall": 0.9809,
+    "f1": 0.9862,
+    "roc_auc": 0.9992
+  },
+  "known_limitations": "Section 12/13 of notebooks/03_ml_models.ipynb found the model partly relies on source-formatting artifacts (e.g. Reuters wire-service boilerplate, embedded image-credit/URL tokens in fake articles) rather than purely content-based signals. High accuracy on this dataset should not be read as proof of general fake-news detection capability."
+}

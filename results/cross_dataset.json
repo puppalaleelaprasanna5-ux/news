@@ -1,0 +1,76 @@
+{
+  "evaluation": "cross_dataset",
+  "model_name": "Logistic Regression",
+  "model_training_dataset": "ISOT Fake and Real News Dataset",
+  "label_convention": {
+    "0": "Real",
+    "1": "Fake"
+  },
+  "dataset": {
+    "name": "WELFake",
+    "path": "C:\\fake-news-detector\\data\\raw\\WELFake_Dataset.csv",
+    "raw_rows": 72134,
+    "dropped_empty_rows": 783,
+    "rows_after_drop": 71351,
+    "scorable_rows": 71321,
+    "unscorable_rows": 30,
+    "raw_label_column": "label",
+    "flip_labels_applied": false,
+    "text_input_policy": "body_only_to_match_training_and_src.models.predict",
+    "raw_label_mapping": {
+      "0": "Real",
+      "1": "Fake"
+    }
+  },
+  "metrics": {
+    "accuracy": 0.8473941756284965,
+    "precision": 0.7888025095471904,
+    "recall": 0.9561084476773021,
+    "f1": 0.8644346461400493,
+    "roc_auc": 0.9231123968417163
+  },
+  "fake_predictions_pct": 61.68169262909943,
+  "true_class_counts": {
+    "real_0": 35027,
+    "fake_1": 36294
+  },
+  "predicted_class_counts": {
+    "real_0": 27329,
+    "fake_1": 43992
+  },
+  "confusion_matrix": {
+    "labels": [
+      "Real (0)",
+      "Fake (1)"
+    ],
+    "matrix": [
+      [
+        25736,
+        9291
+      ],
+      [
+        1593,
+        34701
+      ]
+    ],
+    "png": "C:\\fake-news-detector\\results\\welfake_confusion_matrix.png"
+  },
+  "isot_validation_from_metadata": {
+    "dataset": "ISOT Fake and Real News Dataset",
+    "rows": null,
+    "metrics": {
+      "accuracy": 0.9876,
+      "precision": 0.9915,
+      "recall": 0.9809,
+      "f1": 0.9862,
+      "roc_auc": 0.9992
+    },
+    "fake_predictions_pct": null,
+    "note": "model_metadata.json stores aggregate validation metrics only; it does not contain validation predictions or a confusion matrix."
+  },
+  "notes": [
+    "This evaluates cross-dataset generalization; WELFake results are not directly comparable to the ISOT validation set because dataset composition and collection artifacts differ.",
+    "Model was trained on full article bodies, so short or empty text inputs may be unscorable or less representative.",
+    "Check the printed WELFake sample rows to confirm raw label semantics. Use --flip-labels if raw 0 means Fake and raw 1 means Real."
+  ]
+}

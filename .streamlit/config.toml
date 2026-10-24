@@ -1,0 +1,14 @@
+# NewsCred theme (editorial look). Streamlit reads this file when started from the project root.
+[theme]
+base = "light"
+primaryColor = "#7A2E3A"
+backgroundColor = "#FAF6EE"
+secondaryBackgroundColor = "#F1EBDD"
+textColor = "#1B2A41"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false

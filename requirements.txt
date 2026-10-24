@@ -1,0 +1,49 @@
+# --- Core data handling ---
+pandas==2.2.3
+numpy==1.26.4
+
+# --- Machine Learning (used starting Phase 4, installed now to avoid mid-project conflicts) ---
+scikit-learn==1.8.0
+xgboost==2.1.1
+
+# --- NLP preprocessing (used starting Phase 2/3) ---
+nltk==3.9.1
+
+# --- Vector search for RAG (Phase 7) ---
+faiss-cpu==1.9.0
+
+# --- Text embeddings for RAG (Phase 7) ---
+# Runs locally; no API key. Pulls in PyTorch and transformers automatically. For a smaller download on
+# machines without a GPU, install the CPU build of torch first (see README, "Phase 7 -> Installation").
+# The embedding model itself (all-MiniLM-L6-v2, ~90 MB) is downloaded once on first use.
+sentence-transformers==3.3.1
+
+# --- PDF text extraction for reference documents (Phase 7) ---
+pypdf==5.9.0
+
+# --- Visualization (used starting Phase 3 for EDA) ---
+matplotlib==3.9.2
+seaborn==0.13.2
+
+# --- Web application ---
+fastapi==0.115.5
+uvicorn==0.32.1
+streamlit==1.40.1
+
+# --- Configuration / secrets management ---
+python-dotenv==1.0.1
+
+# --- Notebooks ---
+jupyter==1.1.1
+
+# --- Testing (used starting Phase 2 for tests/) ---
+pytest==8.3.3
+# Needed by FastAPI's TestClient (Phase 8 API tests)
+httpx==0.27.2
+
+# --- HTTP client (the Streamlit frontend calls the FastAPI backend with it) ---
+requests==2.32.3
+
+# NOTE:
+# spacy and an optional transformer classifier are still NOT included (not needed so far).
+# torch/transformers are installed indirectly by sentence-transformers (Phase 7).

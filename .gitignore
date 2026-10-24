@@ -1,0 +1,55 @@
+# --- Virtual environment ---
+.venv/
+venv/
+env/
+
+# --- Python cache ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --- Environment variables / secrets ---
+.env
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Data (raw/processed datasets are usually not committed) ---
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# --- Trained models (can be large binary files) ---
+models/*
+!models/.gitkeep# --- Trained models ---
+models/*
+!models/.gitkeep
+!models/best_model.joblib
+!models/tfidf_vectorizer.joblib
+!models/model_metadata.json
+
+# --- Databases ---
+*.db
+*.sqlite3
+
+# --- FAISS indexes / RAG data ---
+*.index
+*.faiss
+data/rag/index/
+data/rag/demo_index/
+data/rag/reference_docs/*
+!data/rag/reference_docs/.gitkeep
+
+# --- OS / editor files ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Logs ---
+*.log
+
+# --- Streamlit ---
+.streamlit/secrets.toml

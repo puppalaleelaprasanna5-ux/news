@@ -1,0 +1,102 @@
+{
+  "evaluation": "threshold_tuning",
+  "split": {
+    "method": "stratified 50/50",
+    "seed": 42,
+    "tune_rows": 35660,
+    "test_rows": 35661,
+    "flip_labels_applied": false,
+    "raw_rows": 72134,
+    "dropped_empty_rows": 783,
+    "scorable_rows": 71321
+  },
+  "chosen_on_tuning_half": {
+    "best_f1_threshold": 0.56,
+    "best_balanced_accuracy_threshold": 0.65
+  },
+  "test_half": {
+    "default_0.5": {
+      "threshold": 0.5,
+      "accuracy": 0.8456016376433639,
+      "balanced_accuracy": 0.8436170884750291,
+      "precision": 0.7868391195824824,
+      "recall": 0.9554196285887474,
+      "f1": 0.8629734707082773,
+      "roc_auc": 0.9220985003399245,
+      "predicted_fake_pct": 61.79019096491965,
+      "confusion_matrix": {
+        "labels": [
+          "Real (0)",
+          "Fake (1)"
+        ],
+        "matrix": [
+          [
+            12817,
+            4697
+          ],
+          [
+            809,
+            17338
+          ]
+        ]
+      }
+    },
+    "tuned_best_f1": {
+      "threshold": 0.56,
+      "accuracy": 0.8488544909004234,
+      "balanced_accuracy": 0.8471727022887747,
+      "precision": 0.7976573801857296,
+      "recall": 0.9419187744530776,
+      "f1": 0.8638063472811806,
+      "roc_auc": 0.9220985003399245,
+      "predicted_fake_pct": 60.09085555649028,
+      "confusion_matrix": {
+        "labels": [
+          "Real (0)",
+          "Fake (1)"
+        ],
+        "matrix": [
+          [
+            13178,
+            4336
+          ],
+          [
+            1054,
+            17093
+          ]
+        ]
+      }
+    },
+    "tuned_best_balanced_accuracy": {
+      "threshold": 0.65,
+      "accuracy": 0.8518549676116767,
+      "balanced_accuracy": 0.8507382602054294,
+      "precision": 0.8169097359085534,
+      "recall": 0.9136496390587976,
+      "f1": 0.8625757615170512,
+      "roc_auc": 0.9220985003399245,
+      "predicted_fake_pct": 56.91371526317265,
+      "confusion_matrix": {
+        "labels": [
+          "Real (0)",
+          "Fake (1)"
+        ],
+        "matrix": [
+          [
+            13798,
+            3716
+          ],
+          [
+            1567,
+            16580
+          ]
+        ]
+      }
+    }
+  },
+  "notes": [
+    "All metrics in 'test_half' were computed on rows never used to choose the threshold.",
+    "Only the decision threshold changed; the model was not retrained.",
+    "The tuning and test halves are both WELFake, so this does not show generalization to a third dataset."
+  ]
+}
