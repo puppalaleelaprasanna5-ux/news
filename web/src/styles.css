@@ -1,0 +1,131 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * NewsCred design system — warm editorial.
+ * Ivory background, deep navy text, muted burgundy accent.
+ * All colors in oklch. Fonts: Fraunces (display serif), Work Sans (sans).
+ */
+
+@theme inline {
+  --font-sans: "Work Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+}
+
+:root {
+  --radius: 0.5rem;
+  /* Warm ivory page */
+  --background: oklch(0.977 0.010 87.5);
+  /* Deep navy text */
+  --foreground: oklch(0.291 0.047 264.9);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.291 0.047 264.9);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.291 0.047 264.9);
+  /* Muted burgundy accent */
+  --primary: oklch(0.461 0.102 10.1);
+  --primary-foreground: oklch(0.985 0.005 87);
+  --secondary: oklch(0.951 0.012 87.5);
+  --secondary-foreground: oklch(0.291 0.047 264.9);
+  --muted: oklch(0.951 0.012 87.5);
+  /* Muted gray secondary text */
+  --muted-foreground: oklch(0.500 0.026 256.8);
+  --accent: oklch(0.951 0.012 87.5);
+  --accent-foreground: oklch(0.291 0.047 264.9);
+  --destructive: oklch(0.500 0.160 25);
+  --destructive-foreground: oklch(0.985 0.005 87);
+  /* Thin, warm borders */
+  --border: oklch(0.902 0.017 84.6);
+  --input: oklch(0.902 0.017 84.6);
+  --ring: oklch(0.461 0.102 10.1);
+}
+
+.dark {
+  --background: oklch(0.220 0.038 264.9);
+  --foreground: oklch(0.960 0.008 87.5);
+  --card: oklch(0.258 0.042 264.9);
+  --card-foreground: oklch(0.960 0.008 87.5);
+  --popover: oklch(0.258 0.042 264.9);
+  --popover-foreground: oklch(0.960 0.008 87.5);
+  --primary: oklch(0.640 0.110 12.0);
+  --primary-foreground: oklch(0.985 0.005 87);
+  --secondary: oklch(0.310 0.042 264.9);
+  --secondary-foreground: oklch(0.960 0.008 87.5);
+  --muted: oklch(0.310 0.042 264.9);
+  --muted-foreground: oklch(0.700 0.020 256.8);
+  --accent: oklch(0.310 0.042 264.9);
+  --accent-foreground: oklch(0.960 0.008 87.5);
+  --destructive: oklch(0.650 0.170 25);
+  --destructive-foreground: oklch(0.985 0.005 87);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.640 0.110 12.0);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--color-primary) 18%, transparent);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+}
+
+/* Respect reduced-motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

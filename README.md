@@ -56,11 +56,12 @@ fake-news-detector/
 │   ├── processed/          # cleaned/split data written by the preprocessing step (not committed)
 │   └── rag/
 │       ├── sample_reference_docs/   # three FICTIONAL demonstration documents (committed)
+│       ├── index/                   # compact demo FAISS index, chunks, and manifest (committed)
 │       └── reference_docs/          # put your own .txt / .pdf evidence documents here
 │
 ├── notebooks/               # Jupyter notebooks for each analysis stage
 │
-├── models/                  # saved trained models (not committed)
+├── models/                  # saved inference model artifacts (committed)
 │
 ├── src/
 │   ├── preprocessing/        # text cleaning, tokenization
@@ -72,6 +73,7 @@ fake-news-detector/
 ├── app/
 │   ├── backend/               # FastAPI app
 │   └── frontend/               # NewsCred Streamlit app (app.py, render.py, helpers.py, styles.css)
+├── web/                       # NewsCred React/Vite SPA served by FastAPI
 │
 ├── scripts/                 # rag_cli.py (build/search the FAISS index), cross_dataset_eval.py and threshold_tuning.py (evaluation)
 │
@@ -1038,6 +1040,68 @@ python -m streamlit run app/frontend/app.py
 ```
 
 Streamlit opens `http://localhost:8501`. The dashboard needs the API from Terminal 1 to be running; if it is not, the page says so and offers a **Retry connection** button. API docs: `http://127.0.0.1:8000/docs`. Stop either server with `Ctrl+C`. The first analysis is slow (the embedding model is loaded on first use).
+
+### React frontend (local development and single-service deployment)
+
+The Lovable NewsCred React frontend is integrated under `web/`. It uses Vite
+and TanStack Router as a static SPA; the page has no server loaders or server
+functions, so TanStack Start/Nitro SSR is not required. The existing
+`screenshot-exact/` checkout remains a separate frontend backup.
+
+For local development, start the API in one terminal from the project root:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.backend.main:app --host 127.0.0.1 --port 8000
+```
+
+In a second terminal:
+
+```powershell
+cd web
+npm ci
+npm run dev
+```
+
+Open <http://localhost:5173>. Vite proxies `/health` and `/analyze` to the API
+on port 8000. The FastAPI CORS allowlist contains only the localhost/127.0.0.1
+development origins; production frontend/API traffic is same-origin. Streamlit
+remains available using the separate command above.
+
+FastAPI serves `web/dist` when it exists. Exact API routes remain registered
+ahead of the frontend fallback; unrecognized API-path subroutes are not served
+as the SPA. To create the production frontend build locally:
+
+```powershell
+cd web
+npm ci
+npm run build
+cd ..
+.\.venv\Scripts\python.exe -m uvicorn app.backend.main:app --host 127.0.0.1 --port 8000
+```
+
+The React and Streamlit interfaces both call the same `GET /health` and
+`POST /analyze` API. The React UI displays classifier scores as uncalibrated,
+keeps evidence observations separate from the model prediction, preserves
+source metadata and warnings, and labels the shipped sample documents as
+fictional.
+
+#### Render: one Web Service
+
+Create one Render **Web Service** from the main repository. Use:
+
+* **Build command:** `npm ci --prefix web && npm run build --prefix web && python -m pip install -r requirements.txt`
+* **Start command:** `uvicorn app.backend.main:app --host 0.0.0.0 --port $PORT`
+* **Health-check path:** `/health`
+* **Environment:** `PYTHON_VERSION=3.12.3`. Leave `VITE_API_BASE_URL` unset or empty so the built UI calls same-origin API paths. `RAG_INDEX_DIR` and `RAG_EMBEDDING_MODEL` are optional; their project defaults point to the committed sample FAISS index and `sentence-transformers/all-MiniLM-L6-v2`. Render supplies `PORT`.
+
+Build order matters: `npm run build` creates `web/dist`, then the FastAPI
+application serves it. The compact FAISS index and its chunk/manifest metadata
+are committed under `data/rag/index`; the saved classifier artifacts remain in
+`models/`. The Sentence Transformers model is not vendored: the first retrieval
+load downloads it from Hugging Face and caches it on the service filesystem.
+Allow outbound access and enough memory/disk for PyTorch and the embedding
+model; the exact first-load time and Render plan requirements have not been
+measured here. No Render deployment has been performed.
 
 ### The NewsCred dashboard (Streamlit frontend)
 

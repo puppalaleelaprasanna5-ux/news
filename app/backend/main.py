@@ -14,13 +14,13 @@ receives a generic message.
 """
 
 import logging
-import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -35,6 +35,7 @@ from src.credibility.service import (
 )
 
 logger = logging.getLogger("fake_news_api")
+WEB_DIST_DIR = Path(__file__).resolve().parents[2] / "web" / "dist"
 
 
 class AnalyzeRequest(BaseModel):
@@ -280,6 +281,34 @@ def create_app(service: Optional[AnalysisService] = None) -> FastAPI:
             )
         except InputValidationError as err:
             return _validation_response([{"field": "text", "message": str(err)}])
+
+    def serve_frontend(frontend_path: str = ""):
+        static_root = WEB_DIST_DIR.resolve()
+        index_file = static_root / "index.html"
+        if not index_file.is_file():
+            raise HTTPException(status_code=404, detail="Frontend build is not available.")
+
+        if frontend_path:
+            first_segment = frontend_path.split("/", 1)[0].lower()
+            if first_segment in {"analyze", "health", "api", "docs", "redoc", "openapi.json"}:
+                raise HTTPException(status_code=404, detail="Not Found")
+            requested_file = (static_root / frontend_path).resolve()
+            if static_root not in requested_file.parents:
+                raise HTTPException(status_code=404, detail="Not Found")
+            if requested_file.is_file():
+                return FileResponse(requested_file)
+            if Path(frontend_path).suffix:
+                raise HTTPException(status_code=404, detail="Not Found")
+
+        return FileResponse(index_file)
+
+    app.add_api_route("/", lambda: serve_frontend(), methods=["GET"], include_in_schema=False)
+    app.add_api_route(
+        "/{frontend_path:path}",
+        serve_frontend,
+        methods=["GET"],
+        include_in_schema=False,
+    )
 
     return app
 

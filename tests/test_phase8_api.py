@@ -22,6 +22,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 from fastapi.testclient import TestClient  # noqa: E402
 
+import app.backend.main as backend_main  # noqa: E402
 from app.backend.main import create_app  # noqa: E402
 from src.credibility.service import MAX_CLAIMS, MAX_INPUT_CHARS  # noqa: E402
 from tests.test_phase8_service import ARTICLE, fake_predictor, make_service  # noqa: E402
@@ -41,6 +42,20 @@ def test_health_endpoint_reports_components(tmp_path):
     assert set(body["components"]) == {"ml_model", "rag"}
     assert body["components"]["ml_model"]["status"] == "ok"
     assert body["components"]["rag"]["status"] == "unavailable"  # no index in tmp_path
+
+
+def test_built_frontend_is_served_without_intercepting_api_routes(tmp_path, monkeypatch):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "index.html").write_text("<main>NewsCred</main>", encoding="utf-8")
+    (tmp_path / "assets" / "app.js").write_text("console.log('app')", encoding="utf-8")
+    monkeypatch.setattr(backend_main, "WEB_DIST_DIR", tmp_path)
+    client, _ = client_for(tmp_path / "test-service")
+
+    assert client.get("/").text == "<main>NewsCred</main>"
+    assert client.get("/analysis/client-route").text == "<main>NewsCred</main>"
+    assert client.get("/assets/app.js").text == "console.log('app')"
+    assert client.get("/analyze/unknown").status_code == 404
+    assert client.get("/health").status_code == 200
 
 
 def test_health_still_answers_when_everything_is_down(tmp_path):

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-10-24T15:13:51+00:00",
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "dimension": 384,
+  "metric": "cosine similarity (inner product of L2-normalized vectors)",
+  "index_type": "IndexFlatIP",
+  "num_chunks": 5,
+  "chunk_size": 500,
+  "chunk_overlap": 100,
+  "sources": {
+    "brightwater_flood_report.txt": "e952d3a06a7d482822987e71f2d3a389ec89aa4a7f99f56127458691617ab995",
+    "brightwater_library_notes.txt": "419f95e0206e1b65f8539f96b851747cfaa825e42f29ba1f5a9fb12dfc07c76d",
+    "northfield_tram_bulletin.txt": "d73a05ee35558d9c420d1bca5574ed9d42a43e4a3f8f1e97af2bd49676dd5ff4"
+  },
+  "index_sha256": "c28a69b08e4401ff26bcb650f29e52b347245a57d66750aed955e05ef8f329cd",
+  "chunks_sha256": "bc658b3aaab6b182f28d3228dbe0d52b49bbb0916da7cdbab85515b295c4928a"
+}

@@ -41,6 +41,10 @@ data/rag/index/
 data/rag/demo_index/
 data/rag/reference_docs/*
 !data/rag/reference_docs/.gitkeep
+!data/rag/index/
+!data/rag/index/*.faiss
+!data/rag/index/*.jsonl
+!data/rag/index/*.json
 
 # --- OS / editor files ---
 .DS_Store
