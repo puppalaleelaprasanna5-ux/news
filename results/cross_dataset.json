@@ -8,7 +8,7 @@
   },
   "dataset": {
     "name": "WELFake",
-    "path": "C:\\fake-news-detector\\data\\raw\\WELFake_Dataset.csv",
+    "path": "C:\\Users\\sanje\\OneDrive\\Desktop\\fake\\news\\data\\raw\\WELFake_Dataset.csv",
     "raw_rows": 72134,
     "dropped_empty_rows": 783,
     "rows_after_drop": 71351,
@@ -28,6 +28,26 @@
     "recall": 0.9561084476773021,
     "f1": 0.8644346461400493,
     "roc_auc": 0.9231123968417163
+  },
+  "per_class_metrics": {
+    "Real": {
+      "precision": 0.9417102711405466,
+      "recall": 0.7347474805150312,
+      "f1": 0.8254538456604016,
+      "support": 35027
+    },
+    "Fake": {
+      "precision": 0.7888025095471904,
+      "recall": 0.9561084476773021,
+      "f1": 0.8644346461400493,
+      "support": 36294
+    }
+  },
+  "probability_calibration": {
+    "brier_score": 0.11369429379705837,
+    "expected_calibration_error_10_bins": 0.07668213850058198,
+    "calibration_status": "diagnostic_only_not_calibrated",
+    "note": "These are reliability diagnostics on this evaluation set; no calibration model was fitted or validated."
   },
   "fake_predictions_pct": 61.68169262909943,
   "true_class_counts": {
@@ -53,7 +73,7 @@
         34701
       ]
     ],
-    "png": "C:\\fake-news-detector\\results\\welfake_confusion_matrix.png"
+    "png": "C:\\Users\\sanje\\OneDrive\\Desktop\\fake\\news\\results\\welfake_confusion_matrix.png"
   },
   "isot_validation_from_metadata": {
     "dataset": "ISOT Fake and Real News Dataset",
