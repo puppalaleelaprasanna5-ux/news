@@ -278,7 +278,7 @@ def create_app(service: Optional[AnalysisService] = None) -> FastAPI:
         try:
             return svc.analyze(
                 request.text,
-                AnalysisOptions(run_rag=request.run_rag, manual_claims=request.claims, top_k=request.top_k),
+                AnalysisOptions(run_rag=False, manual_claims=request.claims, top_k=request.top_k),
             )
         except InputValidationError as err:
             return _validation_response([{"field": "text", "message": str(err)}])
